@@ -2,8 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Math Blaster — Space Defender</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05040f">
+<title>Space Blasters — Math Mission</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
@@ -12,7 +16,12 @@
     font-family: 'Trebuchet MS', 'Segoe UI', system-ui, sans-serif;
     color: #dfe9ff;
     overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
   }
+  input { -webkit-user-select: text; user-select: text; }
   #wrap {
     position: relative;
     width: 100vw;
@@ -72,6 +81,20 @@
     transition: transform .08s, background .15s;
   }
   #pauseBtn:hover { background: rgba(30,58,120,0.85); transform: translateX(-50%) scale(1.08); }
+  /* Touch bomb button — a big thumb-friendly round button (shown on touch devices during play) */
+  #bombBtn {
+    position: fixed; right: 16px; bottom: 120px;
+    z-index: 40; width: 74px; height: 74px; border-radius: 50%;
+    border: 2px solid rgba(255,180,90,0.75);
+    background: radial-gradient(circle at 35% 30%, rgba(70,50,30,0.9), rgba(30,16,8,0.9));
+    color: #ffe9b0; font-size: 30px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.6), 0 0 22px rgba(255,150,60,0.35);
+    font-family: inherit; touch-action: manipulation;
+  }
+  #bombBtn:active { transform: scale(0.92); }
+  #bombBtn .cnt { font-size: 13px; font-weight: bold; color: #ffd36e; line-height: 1; margin-top: -2px; }
+  #bombBtn.empty { opacity: 0.35; filter: grayscale(0.8); }
   h1 {
     font-size: 54px;
     letter-spacing: 2px;
@@ -271,6 +294,47 @@
     pointer-events:none; opacity:0; z-index:5;
   }
   .small { font-size:13px; color:#7e90c0; margin-top:6px; }
+
+  /* ============================================================
+     RESPONSIVE — phones & small tablets. The game canvas always
+     fills the screen; the HUD and overlay screens compact and
+     scroll instead of overflowing.
+     ============================================================ */
+  .overlay { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  @media (max-height: 760px), (max-width: 700px) {
+    .overlay { justify-content: flex-start; padding: 18px 14px 28px; }
+  }
+  @media (max-width: 700px) {
+    #hud { padding: 8px 8px; font-size: 14px; flex-wrap: wrap; }
+    #hud .chip { padding: 3px 9px; margin-right: 4px; margin-bottom: 3px; border-radius: 20px; }
+    #hud .label { font-size: 9px; }
+    #hud .val { font-size: 14px; }
+    #hud .chip.hide-sm { display: none; }
+    #pauseBtn { top: auto; bottom: 120px; left: 16px; transform: none; }
+    #pauseBtn:hover { transform: scale(1.08); }
+    .subtitle { font-size: 14px; margin-bottom: 14px; }
+    .voice-note { padding: 10px 14px 10px 12px; gap: 10px; margin: 4px 0 14px; }
+    .vn-badge { width: 42px; height: 42px; font-size: 20px; }
+    .vn-text b { font-size: 15px; }
+    .vn-text span { font-size: 12px; }
+    .btn { padding: 12px 28px; font-size: 17px; }
+    .btn.launch { font-size: 20px; padding: 14px 40px; }
+    .caro-arrow { width: 42px; height: 42px; font-size: 24px; }
+    .caro-name { font-size: 19px; }
+    .caro-label { margin: 4px 0 8px; }
+    .acct-card { padding: 12px 12px 10px; margin-bottom: 12px; }
+    .name-row input { font-size: 16px; padding: 9px 10px; }
+    #resultStats { gap: 10px; }
+    .stat { padding: 10px 16px; min-width: 96px; }
+    .stat .big { font-size: 26px; }
+    #breakdown { max-height: 30vh; }
+    #bombBtn { right: 12px; bottom: 108px; width: 66px; height: 66px; font-size: 26px; }
+  }
+  @media (max-width: 420px) {
+    #hud { font-size: 12px; }
+    #hud .val { font-size: 13px; }
+    .lb-table { font-size: 14px; }
+  }
 </style>
 </head>
 <body>
@@ -294,6 +358,10 @@
   </div>
 
   <div id="levelUp"></div>
+
+  <!-- on-screen game controls (shown during play; bomb button on touch devices only) -->
+  <button id="pauseBtn" class="hidden" aria-label="Pause">⏸</button>
+  <button id="bombBtn" class="hidden" aria-label="Drop bomb">💣<span class="cnt" id="bombCnt">5</span></button>
 
   <!-- START -->
   <div id="startScreen" class="overlay">
@@ -331,7 +399,7 @@
 
     <div class="voice-note">
       <div class="vn-badge">🎙️</div>
-      <div class="vn-text"><b>Shout the answer to BLAST it out of the sky! 🚀</b><span>Allow the mic to fire your blaster · works best in Chrome or Edge.</span></div>
+      <div class="vn-text"><b>Shout the answer to BLAST it out of the sky! 🚀</b><span>Allow the mic to answer by voice — or tap the answer buttons / type it on a keyboard. Drag to fly on a touch screen; slide the mouse on a computer.</span></div>
     </div>
 
     <button class="btn launch" id="startBtn">🚀 LAUNCH MISSION</button>
@@ -376,6 +444,9 @@
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   }
   window.addEventListener('resize', resize);
+  // orientation flips & mobile browser chrome showing/hiding report late — re-measure after settle
+  window.addEventListener('orientationchange', () => { setTimeout(resize, 250); setTimeout(resize, 600); });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
   resize();
 
   // ============================================================================
@@ -1281,6 +1352,21 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       if (paused) return;       // ignore gameplay keys while paused
       tryLock();   // any key re-captures the cursor in the game
       if (!wasDown && (e.key === ' ' || e.key === 'b' || e.key === 'B')) dropWingmanBomb();
+      // TYPE the answer (desktop keyboards): digits build a buffer that fires the turrets the
+      // moment it ends with the correct answer — same forgiving "only ever fires the right
+      // answer" rule as voice, so a typo can never count against the pilot.
+      if (/^[0-9]$/.test(e.key) && problem && !problem.answered && !problem.dead){
+        const now = performance.now();
+        if (now - typedT > 2000) typedBuf = '';          // stale buffer — start fresh
+        typedBuf = (typedBuf + e.key).slice(-4);
+        typedT = now;
+        if (typedBuf.endsWith(String(problem.answer))){
+          const opt = problem.options.find(o => o.value === problem.answer) || { value: problem.answer };
+          chooseAnswer(opt);
+          typedBuf = '';
+        }
+      }
+      if (e.key === 'Backspace' || e.key === 'Delete') typedBuf = '';
     }
   });
 
@@ -1296,21 +1382,23 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   function togglePause(){ setPause(!paused); }
   window.addEventListener('keyup', e => { keys[e.key] = false; });
 
-  // ---------- Trackpad pulls the ship (motion-driven) ----------
-  // The ship is "pulled" by your finger: it flies WHILE the finger is moving and
-  // coasts to a stop when the finger stops. The direction your finger moves becomes
-  // the ship's heading, so circling the finger sweeps the nose smoothly all the way
-  // around — great for aiming the laser. The ship stays inside the screen edges.
-  // SPACE (or click) fires; B (or double-click) drops a bomb.
+  // ============================================================================
+  // INPUT — auto-detected, dual mode.
+  //   DESKTOP (mouse/trackpad): Pointer Lock steering — the ship is "pulled" by relative
+  //     cursor movement so the cursor can never slip out of the window. Type the answer on
+  //     the keyboard, or say it (voice), or click an answer button while unlocked.
+  //   TOUCH (iPad / iPhone / Android): drag ANYWHERE to move the ship (relative — your finger
+  //     never has to cover the ship), tap to fire a bonus volley, tap the big answer buttons
+  //     to answer, tap 💣 to drop a bomb. No pointer lock on touch.
+  // ============================================================================
+  let touchMode = (('ontouchstart' in window) || navigator.maxTouchPoints > 0) &&
+                  !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
   let mouseX = W/2, mouseY = H/2;        // current pointer position over canvas
-  let lastPX = null, lastPY = null;      // previous pointer position
-  let fingerDX = 0, fingerDY = 0;        // finger movement accumulated this frame
-  let padVX = 0, padVY = 0;              // smoothed finger velocity (for the trackpad widget)
-  let targetAngle = -Math.PI/2;          // desired heading (starts pointing up)
-  let fireCD = 0;                        // laser cooldown frames (legacy)
+  let fingerDX = 0, fingerDY = 0;        // pointer/finger movement accumulated this frame
   let lastBulletT = 0;                   // wall-clock timestamp of the last bullet volley (ms)
-  let lastClickT = 0;
   const aim = { has:false };             // becomes true once the player starts steering
+  // typed-answer buffer (desktop keyboards): digits fire the turrets the moment they match
+  let typedBuf = '', typedT = 0;
 
   function pointerPos(e){
     const r = canvas.getBoundingClientRect();
@@ -1320,6 +1408,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   // Pointer Lock keeps the real cursor INSIDE the game so it can never slip out the top/side.
   let lockRetryT = 0;
   function tryLock(){
+    if (touchMode) return;                        // touch devices never use pointer lock
     if (state !== State.PLAY || paused) return;
     if (document.pointerLockElement === canvas) return;
     const now = performance.now();
@@ -1330,6 +1419,24 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       // some browsers return a promise; swallow the SecurityError thrown during cooldown
       if (pr && pr.catch) pr.catch(()=>{});
     } catch(_){}
+  }
+  // Tap/click on one of the on-screen answer buttons? (returns true if it consumed the tap)
+  function tapAnswer(x, y){
+    if (!problem || problem.answered || problem.dead) return false;
+    for (const o of problem.options){
+      if (!o.w) continue;
+      if (x >= o.x-6 && x <= o.x+o.w+6 && y >= o.y-8 && y <= o.y+o.h+8){
+        chooseAnswer(o);
+        return true;
+      }
+    }
+    return false;
+  }
+  // A tap on open space fires a satisfying bonus volley (the ship auto-fires anyway).
+  function tapFire(){
+    const lo = weaponLoadout(weaponLevel());
+    fireBullets(lo);
+    if (!lo.plasma) Sfx.laser();
   }
   function onPointerMove(e){
     // ONLY steer when the cursor is truly locked inside the game. If it's loose, we ignore
@@ -1347,33 +1454,111 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     if (state === State.PLAY){ aim.has = true; e.preventDefault(); }
   }
   function onPointerDown(e){
+    touchMode = false;                    // a real mouse click → desktop control mode
     if (state !== State.PLAY) return;
     if (paused){ setPause(false); e.preventDefault(); return; }   // click anywhere to resume
+    // while UNLOCKED, a click can hit the on-screen answer buttons
+    if (document.pointerLockElement !== canvas){
+      const p = pointerPos(e);
+      if (tapAnswer(p.x, p.y)){ e.preventDefault(); return; }
+    }
     // a trackpad press only locks the cursor — it does NOT drop a bomb (so you don't waste
     // your earned mega-bombs by pressing the trackpad). Bombs are dropped with SPACE / B.
     tryLock();
     e.preventDefault();
   }
-  function onPointerUp(){ mouseDown = false; }
+
+  // ---------- TOUCH: drag = move (relative), quick tap = answer button / bonus volley ----------
+  let touchId = null, touchStartX = 0, touchStartY = 0, touchStartT = 0, touchMoved = 0,
+      lastTX = 0, lastTY = 0;
+  function touchXY(t){
+    const r = canvas.getBoundingClientRect();
+    return { x: t.clientX - r.left, y: t.clientY - r.top };
+  }
+  function onTouchStart(e){
+    touchMode = true;
+    if (state !== State.PLAY) return;             // overlays sit above the canvas anyway
+    e.preventDefault();                            // stop scrolling/zoom + synthetic mouse events
+    Sfx.resume();
+    if (paused){ setPause(false); return; }        // tap anywhere to resume
+    if (touchId === null && e.changedTouches.length){
+      const t = e.changedTouches[0];
+      touchId = t.identifier;
+      const p = touchXY(t);
+      touchStartX = lastTX = p.x; touchStartY = lastTY = p.y;
+      touchStartT = performance.now(); touchMoved = 0;
+    } else {
+      // a SECOND finger while steering = an instant tap (two-handed play: one thumb flies,
+      // the other taps answers) — answer button if it hits one, else a bonus volley
+      for (const t of e.changedTouches){
+        if (t.identifier === touchId) continue;
+        const p = touchXY(t);
+        if (!tapAnswer(p.x, p.y)) tapFire();
+      }
+    }
+  }
+  function onTouchMove(e){
+    if (state !== State.PLAY || paused) return;
+    e.preventDefault();
+    for (const t of e.changedTouches){
+      if (t.identifier !== touchId) continue;
+      const p = touchXY(t);
+      let dx = p.x - lastTX, dy = p.y - lastTY;
+      touchMoved += Math.abs(dx) + Math.abs(dy);
+      dx = Math.max(-60, Math.min(60, dx));
+      dy = Math.max(-60, Math.min(60, dy));
+      fingerDX += dx; fingerDY += dy;
+      lastTX = p.x; lastTY = p.y;
+      aim.has = true;
+    }
+  }
+  function onTouchEnd(e){
+    for (const t of e.changedTouches){
+      if (t.identifier !== touchId) continue;
+      touchId = null;
+      if (state !== State.PLAY || paused) return;
+      const dur = performance.now() - touchStartT;
+      if (dur < 320 && touchMoved < 16){           // a quick, still finger = a TAP
+        e.preventDefault();
+        const p = touchXY(t);
+        if (!tapAnswer(p.x, p.y)) tapFire();
+      }
+    }
+  }
+  function onTouchCancel(){ touchId = null; }
 
   canvas.addEventListener('mousedown', onPointerDown);
   window.addEventListener('mousemove', onPointerMove);
-  window.addEventListener('mouseup', onPointerUp);
-  canvas.addEventListener('touchstart', onPointerDown, {passive:false});
-  canvas.addEventListener('touchmove', onPointerMove, {passive:false});
-  window.addEventListener('touchend', onPointerUp);
+  canvas.addEventListener('touchstart', onTouchStart, {passive:false});
+  canvas.addEventListener('touchmove', onTouchMove, {passive:false});
+  canvas.addEventListener('touchend', onTouchEnd, {passive:false});
+  canvas.addEventListener('touchcancel', onTouchCancel);
 
   // If the cursor lock is lost mid-game and we DIDN'T do it on purpose (e.g. the player hit
   // Esc, or the OS stole focus), freeze the game so the ship can't fly off after the loose
-  // cursor — then a single click resumes and re-locks.
+  // cursor — then a single click resumes and re-locks. (Desktop only — touch never locks.)
   document.addEventListener('pointerlockchange', () => {
     const locked = (document.pointerLockElement === canvas);
-    if (!locked && state === State.PLAY && !paused && !intentionalUnlock){
+    if (!locked && state === State.PLAY && !paused && !intentionalUnlock && !touchMode){
       setPause(true);
     }
     if (locked) intentionalUnlock = false;
   });
   document.addEventListener('pointerlockerror', () => { lockRetryT = performance.now() + 600; });
+
+  // On-screen buttons: pause (all devices) + bomb (touch). touchstart for zero-latency response;
+  // preventDefault suppresses the synthetic click that would otherwise double-fire.
+  const pauseBtnEl = document.getElementById('pauseBtn');
+  const bombBtnEl = document.getElementById('bombBtn');
+  if (pauseBtnEl){
+    pauseBtnEl.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); togglePause(); }, {passive:false});
+    pauseBtnEl.addEventListener('click', e => { e.stopPropagation(); togglePause(); });
+  }
+  if (bombBtnEl){
+    const dropIt = () => { if (state === State.PLAY && !paused) dropWingmanBomb(); };
+    bombBtnEl.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); dropIt(); }, {passive:false});
+    bombBtnEl.addEventListener('click', e => { e.stopPropagation(); dropIt(); });
+  }
 
   // Forward gun for levels 1-3: single → double → triple bolts. Fires in direction `dir`
   // (defaults to straight up). Wingmen pass their own position AND an angled direction.
@@ -2283,6 +2468,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     }
     updateHUD();
     problem = null;
+    typedBuf = '';   // fresh typing buffer for the next problem
     // Next problem appears immediately after the previous one is blasted.
     problemTimer = 0;
   }
@@ -2437,6 +2623,10 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     // Extra lives: 1 base ship ❤️ plus one per earned wingman.
     const totalLives = wingmen + 1;
     hud.wing.textContent = totalLives<=6 ? '❤️'.repeat(totalLives) : ('❤️×' + totalLives);
+    // keep the on-screen touch bomb button in sync
+    const bc = document.getElementById('bombCnt');
+    if (bc){ bc.textContent = wingBombs; }
+    if (bombBtnEl) bombBtnEl.classList.toggle('empty', wingBombs <= 0);
   }
 
   // ---------- Update ----------
@@ -3099,6 +3289,9 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     // problem — falls normally, or shows inside the boss core during a boss fight
     if (problem && !problem.dead) drawProblem(problem);
 
+    // big tappable/clickable ANSWER buttons along the bottom (voice & typing also work)
+    if (problem && !problem.dead && !problem.answered) drawOptions(problem);
+
     // shockwaves (e.g. from explosions during play)
     drawShockwaves();
 
@@ -3122,8 +3315,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     // weapon-up / ammo-reset banner
     drawNotice();
 
-    // hint to lock the cursor into the game if it isn't captured yet
-    if (document.pointerLockElement !== canvas && state === State.PLAY && !paused){
+    // hint to lock the cursor into the game if it isn't captured yet (desktop only)
+    if (!touchMode && document.pointerLockElement !== canvas && state === State.PLAY && !paused){
       ctx.save();
       ctx.globalAlpha = 0.5 + 0.3*Math.sin(performance.now()/300);
       ctx.fillStyle = '#fde68a'; ctx.font = 'bold 16px Trebuchet MS';
@@ -3143,7 +3336,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       ctx.fillText('⏸  PAUSED', W/2, H/2 - 20);
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#9fb6dd'; ctx.font = '22px Trebuchet MS';
-      ctx.fillText('Press  SHIFT  ·  or click the screen  — to resume', W/2, H/2 + 40);
+      ctx.fillText(touchMode ? 'Tap the screen to resume' : 'Press  SHIFT  ·  or click the screen  — to resume', W/2, H/2 + 40);
       ctx.restore();
     }
 
@@ -4536,6 +4729,58 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
 
   function isHover(o){ return mouseX>=o.x&&mouseX<=o.x+o.w&&mouseY>=o.y&&mouseY<=o.y+o.h; }
 
+  // The three big ANSWER buttons along the bottom — tap (touch) or click (unlocked mouse) to
+  // answer. Voice and typed digits remain the fast paths; these make the game fully playable
+  // on any device, mic or not.
+  function drawOptions(p){
+    const t = performance.now()/1000;
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const o of p.options){
+      if (!o.w) continue;
+      const cx = o.x + o.w/2, cy = o.y + o.h/2;
+      ctx.save();
+      if (o.wrong){
+        // an already-tried wrong answer: dimmed & struck out
+        ctx.globalAlpha = 0.55;
+        ctx.fillStyle = 'rgba(70,16,26,0.85)';
+        ctx.strokeStyle = 'rgba(253,164,175,0.6)';
+      } else {
+        ctx.fillStyle = 'rgba(13,21,48,0.86)';
+        ctx.strokeStyle = 'rgba(124,200,255,0.65)';
+      }
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = o.wrong ? 'rgba(255,80,110,0.4)' : 'rgba(90,170,255,0.45)';
+      ctx.shadowBlur = 12;
+      roundRect(o.x, o.y, o.w, o.h, 16); ctx.fill();
+      ctx.shadowBlur = 0; ctx.stroke();
+      // subtle inner top-light so the buttons feel raised / pressable
+      if (!o.wrong){
+        const ig = ctx.createLinearGradient(0, o.y, 0, o.y + o.h);
+        ig.addColorStop(0, 'rgba(160,220,255,0.14)'); ig.addColorStop(0.5, 'rgba(160,220,255,0)');
+        ctx.fillStyle = ig; roundRect(o.x, o.y, o.w, o.h, 16); ctx.fill();
+      }
+      ctx.fillStyle = o.wrong ? '#fda4af' : '#eef7ff';
+      ctx.font = 'bold ' + Math.round(Math.min(34, o.h*0.5)) + 'px Trebuchet MS';
+      ctx.fillText(String(o.value), cx, cy + 1);
+      if (o.wrong){
+        ctx.strokeStyle = '#fda4af'; ctx.lineWidth = 3;
+        const wch = ctx.measureText(String(o.value)).width;
+        ctx.beginPath(); ctx.moveTo(cx - wch/2 - 8, cy); ctx.lineTo(cx + wch/2 + 8, cy); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // typed-digit buffer indicator (desktop keyboards)
+    if (typedBuf && performance.now() - typedT < 2000){
+      const y = p.options[0] ? p.options[0].y - 24 : H - 110;
+      ctx.font = 'bold 22px Trebuchet MS';
+      ctx.fillStyle = '#fde68a'; ctx.shadowColor = '#ffd36e'; ctx.shadowBlur = 10;
+      ctx.fillText('⌨ ' + typedBuf, W/2, y);
+      ctx.shadowBlur = 0;
+    }
+    ctx.restore();
+  }
+
   function roundRect(x,y,w,h,r){
     ctx.beginPath();
     ctx.moveTo(x+r,y);
@@ -4567,11 +4812,11 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     game.startTime = performance.now();
     lasers=[]; asteroids=[]; orbs=[]; floaters=[]; particles=[]; problem=null;
     shockwaves=[]; screenFlash=0; screenShake=0; paused=false; lastBulletT=0;
-    ammo = { 1:0, 2:0, 3:0 }; lastClickT = 0;
+    ammo = { 1:0, 2:0, 3:0 };
     asteroidTimer=60; problemTimer=12;
     resetShip();
-    aim.has = false; targetAngle = -Math.PI/2; fireCD = 0;
-    fingerDX = 0; fingerDY = 0; padVX = 0; padVY = 0; lastPX = null; lastPY = null;
+    aim.has = false;
+    fingerDX = 0; fingerDY = 0; touchId = null; typedBuf = '';
     ship.angle = -Math.PI/2;
     placeTurrets();
     canvas.style.cursor = 'none';   // the ship replaces the cursor
@@ -4580,6 +4825,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     document.getElementById('resultScreen').classList.add('hidden');
     hud.el.classList.remove('hidden');
     { const pb = document.getElementById('pauseBtn'); if (pb){ pb.classList.remove('hidden'); pb.textContent = '⏸'; } }
+    if (bombBtnEl) bombBtnEl.classList.toggle('hidden', !touchMode);
     updateHUD();
     startListening();   // begin voice recognition if mic was granted
     tryLock();          // capture the cursor inside the game window
@@ -4593,6 +4839,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     hud.el.classList.add('hidden');
     paused = false;
     { const pb = document.getElementById('pauseBtn'); if (pb) pb.classList.add('hidden'); }
+    if (bombBtnEl) bombBtnEl.classList.add('hidden');
     buildResults();
     document.getElementById('resultScreen').classList.remove('hidden');
     submitScoreToBoard();   // post the run to the global leaderboard (if signed in)

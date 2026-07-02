@@ -189,6 +189,42 @@
     box-shadow:none; font-size:16px; padding:10px 26px; }
   .btn.ghost:hover { background: rgba(40,70,140,0.85); }
 
+  /* ---- Difficulty mode selector ---- */
+  .mode-wrap { margin: 0 0 12px; text-align: center; }
+  .mode-head { color:#9fb6e8; letter-spacing:2px; font-size:12px; text-transform:uppercase; margin-bottom:8px; }
+  .mode-row { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; max-width: 640px; }
+  .mode-btn {
+    font-family:inherit; cursor:pointer; border-radius:24px; padding:8px 16px;
+    font-size:15px; font-weight:bold; letter-spacing:0.3px;
+    background:rgba(16,24,54,0.72); color:#cfe0ff;
+    border:1.5px solid rgba(110,160,255,0.35);
+    transition: transform .12s, background .15s, box-shadow .15s;
+  }
+  .mode-btn:hover { background:rgba(36,60,120,0.85); transform: translateY(-1px); }
+  .mode-btn.on {
+    background:linear-gradient(90deg,#67e8f9,#a78bfa); color:#0a0a20; border-color:transparent;
+    box-shadow:0 4px 18px rgba(103,232,249,0.45); transform: scale(1.05);
+  }
+  .mode-blurb { font-size:13px; color:#8fa4d4; margin-top:7px; min-height:17px; }
+  @media (max-width: 700px) {
+    .mode-btn { font-size: 13px; padding: 7px 12px; }
+  }
+  /* Ease-up button (during play) */
+  #easeBtn {
+    position: fixed; top: 66px; left: 50%; transform: translateX(-50%);
+    z-index: 40; border-radius: 24px; padding: 7px 16px;
+    border: 1.5px solid rgba(125,211,252,0.55);
+    background: rgba(12,18,40,0.72); color: #bfe3ff;
+    font-family: inherit; font-size: 14px; font-weight: bold; cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.5); backdrop-filter: blur(3px);
+    transition: transform .08s, background .15s;
+  }
+  #easeBtn:hover { background: rgba(30,58,120,0.85); transform: translateX(-50%) scale(1.06); }
+  @media (max-width: 700px) {
+    #easeBtn { top: auto; bottom: 200px; left: 16px; transform: none; }
+    #easeBtn:hover { transform: scale(1.06); }
+  }
+
   /* symmetrical sign-in card */
   .acct-card {
     width: min(440px, 92vw); margin: 0 auto 18px;
@@ -343,13 +379,14 @@
 
   <div id="hud" class="hidden">
     <div class="left">
-      <span class="chip"><span class="label">Pilot</span> <span class="val" id="hudName">—</span></span>
-      <span class="chip"><span class="label">Rank</span> <span class="val" id="hudRank">—</span></span>
+      <span class="chip hide-sm"><span class="label">Pilot</span> <span class="val" id="hudName">—</span></span>
+      <span class="chip hide-sm"><span class="label">Rank</span> <span class="val" id="hudRank">—</span></span>
       <span class="chip"><span class="label">Score</span> <span class="val gold" id="hudScore">0</span></span>
       <span class="chip"><span class="label">Laser</span> <span class="val" id="hudLaser" style="color:#7dd3fc">Lv 1</span></span>
       <span class="chip" id="micChip"><span class="label">Voice</span> <span class="val" id="micState" style="color:#86efac">off</span></span>
     </div>
     <div class="right">
+      <span class="chip"><span class="label">Mode</span> <span class="val" style="color:#7ee8fa;font-size:15px" id="hudMode">Full Journey</span></span>
       <span class="chip"><span class="label">Stage</span> <span class="val" style="color:#c4b5fd;font-size:15px" id="hudGrade">Add within 5</span></span>
       <span class="chip"><span class="label">Solved</span> <span class="val green" id="hudSolved">0</span></span>
       <span class="chip"><span class="label">Bombs</span> <span class="val" id="hudAmmo" style="color:#ffd36e">—</span></span>
@@ -361,6 +398,7 @@
 
   <!-- on-screen game controls (shown during play; bomb button on touch devices only) -->
   <button id="pauseBtn" class="hidden" aria-label="Pause">⏸</button>
+  <button id="easeBtn" class="hidden" title="Make the math a bit easier (E)" aria-label="Ease up">💙 Easier</button>
   <button id="bombBtn" class="hidden" aria-label="Drop bomb">💣<span class="cnt" id="bombCnt">5</span></button>
 
   <!-- START -->
@@ -383,6 +421,13 @@
     <div class="welcome-row hidden" id="welcomeRow">
       <span class="welcome-text" id="welcomeText">👋 Welcome back, Pilot!</span>
       <button class="btn ghost mini" id="switchPilotBtn">↺ Switch / add pilot</button>
+    </div>
+
+    <!-- Difficulty mode -->
+    <div class="mode-wrap">
+      <div class="mode-head">🎚️ Mission Difficulty</div>
+      <div class="mode-row" id="modeRow"></div>
+      <div class="mode-blurb" id="modeBlurb"></div>
     </div>
 
     <!-- Ship carousel (car-select style) -->
@@ -1179,12 +1224,12 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   ];
   function makeEnemy(x, y, mode, opts){
     opts = opts || {};
-    const g = gradeOf(game.level);
+    const g = combatGrade();
     const kind = rnd(ENEMY_KINDS.length);
     if (opts.fallen){
       // A FALLEN-PROBLEM enemy: an elite armored WRAITH dreadnought — a serious punishment for
       // letting a problem through. MUCH tougher than before, so you really don't want to miss.
-      const hp = 200 + game.level*18;        // tougher — a real punishment for letting one through
+      const hp = 200 + combatLevel()*18;     // tougher — a real punishment for letting one through
       return { x, y, vx:0, vy:0, r:32, hp, maxHp:hp, hitFlash:0, mode,
         ty: 50 + rnd(70), fireCD: 50 + rnd(40), kind, sway: Math.random()*6, t:0, spin: Math.random()*6,
         tier:3, fallen:true, toughAmmo:true, dodge:true };
@@ -1352,6 +1397,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       if (paused) return;       // ignore gameplay keys while paused
       tryLock();   // any key re-captures the cursor in the game
       if (!wasDown && (e.key === ' ' || e.key === 'b' || e.key === 'B')) dropWingmanBomb();
+      if (!wasDown && (e.key === 'e' || e.key === 'E')) easeUp(false);   // manual ease-up
       // TYPE the answer (desktop keyboards): digits build a buffer that fires the turrets the
       // moment it ends with the correct answer — same forgiving "only ever fires the right
       // answer" rule as voice, so a typo can never count against the pilot.
@@ -1558,6 +1604,12 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const dropIt = () => { if (state === State.PLAY && !paused) dropWingmanBomb(); };
     bombBtnEl.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); dropIt(); }, {passive:false});
     bombBtnEl.addEventListener('click', e => { e.stopPropagation(); dropIt(); });
+  }
+  const easeBtnEl = document.getElementById('easeBtn');
+  if (easeBtnEl){
+    const easeIt = () => { if (state === State.PLAY && !paused) easeUp(false); };
+    easeBtnEl.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); easeIt(); }, {passive:false});
+    easeBtnEl.addEventListener('click', e => { e.stopPropagation(); easeIt(); });
   }
 
   // Forward gun for levels 1-3: single → double → triple bolts. Fires in direction `dir`
@@ -2200,6 +2252,85 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   function clampN(v,lo,hi){ return Math.max(lo,Math.min(hi,v)); }
   const TOTAL_STAGE_LEVELS = STAGES.reduce((s,st)=>s+st.levels,0);
 
+  // ============================================================================
+  // DIFFICULTY MODES — pick where on the ladder the mission starts.
+  //   start      : the global level the run begins at (a little easy for that tier)
+  //   ramp       : while below this level, only 2 problems are needed per level, so the
+  //                game climbs QUICKLY up to the mode's cruising tier — then normal pacing
+  //                takes over and it keeps climbing forever.
+  //   speedBase  : problems fall as if you were at this level when the run starts (keeps
+  //                harder modes from opening at max fall speed).
+  //   combatBase : enemy aggression baseline — combat pressure scales with PROGRESS through
+  //                the mode (via combatLevel), not the raw math level, so Expert doesn't
+  //                open with max-rate enemy spawns while your weapon is still level 1.
+  // Stage boundaries: add5 1-3 · sub5 4-6 · add10 7-10 · sub10 11-14 · make10 15-17 ·
+  // add20 18-21 · sub20 22-25 · miss10 26-29 · miss20 30-33 · 2-digit 34-46 · missBig 47-52 ·
+  // multiplication 53-81 · division 82-102.
+  // ============================================================================
+  const MODES = [
+    { key:'journey',      name:'Full Journey', icon:'🚀', blurb:'The whole adventure — start at the very beginning and climb every stage.',        start:1,  ramp:0,  speedBase:0, combatBase:0 },
+    { key:'beginner',     name:'Beginner',     icon:'🌱', blurb:'Adding & subtracting small numbers — climbs quickly to facts within 10.',          start:1,  ramp:7,  speedBase:0, combatBase:0 },
+    { key:'intermediate', name:'Intermediate', icon:'⭐', blurb:'Starts within 10, ramps fast to make-ten & adding within 20.',                     start:7,  ramp:18, speedBase:3, combatBase:3 },
+    { key:'advanced',     name:'Advanced',     icon:'🔥', blurb:'Starts within 20, ramps fast to missing numbers & 2-digit math.',                  start:22, ramp:34, speedBase:5, combatBase:6 },
+    { key:'expert',       name:'Expert',       icon:'👑', blurb:'Starts with easy times tables, ramps fast to full multiplication & division.',     start:53, ramp:66, speedBase:7, combatBase:9 },
+  ];
+  let MODE = MODES[0];
+  try { const mi = parseInt(localStorage.getItem('mb_mode')||'0',10); if (MODES[mi]) MODE = MODES[mi]; } catch(_){}
+
+  // problems needed to clear a level: 2 while fast-ramping up to the mode's tier, then a
+  // gentle climb based on progress THROUGH the mode (journey: identical to the old formula)
+  function neededFor(level){
+    if (MODE.ramp && level < MODE.ramp) return 2;
+    return 4 + Math.floor(Math.max(0, level - (MODE.start - 1)) / 3);
+  }
+  // Combat pressure level — progress through the current mode, offset by the mode's baseline.
+  // Drives enemy spawn rate / HP / fire rate & asteroid speed so every mode opens fair.
+  function combatLevel(){ return Math.max(1, game.level - MODE.start + 1 + MODE.combatBase); }
+  // combat "grade" (rough tier of enemy toughness) derived from combat progress
+  function combatGrade(){ return Math.max(1, Math.round(combatLevel()/4.4)); }
+
+  // ---- EASE-UP: manual (E key / on-screen 💙 button) + automatic after 3 misses in a row ----
+  let missStreak = 0;
+  function easeUp(auto){
+    if (state !== State.PLAY) return;
+    missStreak = 0;
+    if (game.level <= 1){ noticeText = '💙 Already at the easiest level!'; noticeT = 90; return; }
+    game.level = Math.max(1, game.level - 3);
+    game.problemsThisLevel = 0;
+    game.neededPerLevel = neededFor(game.level);
+    factQueue = []; factQueueStage = -1;       // rebuild the fact queue for the easier stage
+    noticeText = (auto ? '💙 EASING UP — ' : '💙 Easier: ') + stageName(game.level);
+    noticeT = 140;
+    Sfx.pickup();
+    updateHUD();
+  }
+  function registerMiss(){
+    missStreak++;
+    if (missStreak >= 3) easeUp(true);          // struggling — automatically step back
+  }
+
+  // ---- Mode selector on the start screen ----
+  (function buildModeSelector(){
+    const row = document.getElementById('modeRow'), blurb = document.getElementById('modeBlurb');
+    if (!row) return;
+    MODES.forEach((m, i) => {
+      const b = document.createElement('button');
+      b.className = 'mode-btn';
+      b.textContent = m.icon + ' ' + m.name;
+      b.addEventListener('click', () => {
+        MODE = MODES[i];
+        try { localStorage.setItem('mb_mode', String(i)); } catch(_){}
+        refresh();
+      });
+      row.appendChild(b);
+    });
+    function refresh(){
+      [...row.children].forEach((b,k)=>b.classList.toggle('on', MODES[k]===MODE));
+      blurb.textContent = MODE.blurb;
+    }
+    refresh();
+  })();
+
   // Map a global level → which stage we're in and how deep (idx/frac), with overflow for endless play.
   function stageInfo(level){
     let lv = Math.max(1, level|0), acc = 0;
@@ -2312,9 +2443,11 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     while (opts.size < 3) opts.add(answer + opts.size);
     const optionValues = shuffle([...opts]);
 
-    // Fall speed ramps gently with the global level but stays kid-friendly. Problems that
-    // take more thought (missing-number, two-digit) fall a bit slower.
-    let speed = Math.min(4.0, 1.2 + L*0.07);
+    // Fall speed ramps gently with PROGRESS through the chosen mode (so harder modes still
+    // start kid-friendly). Problems that take more thought (missing-number, two-digit) fall
+    // a bit slower.
+    const sL = (MODE.start === 1) ? L : (MODE.speedBase + Math.max(0, L - MODE.start));
+    let speed = Math.min(4.0, 1.2 + sL*0.07);
     if (text.indexOf('?') >= 0 || /\d\d/.test(text)) speed *= 0.78;
 
     return {
@@ -2367,6 +2500,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       // missiles at the boss when one is present.
       const px = problem.x, py = problem.y, pts = problem.answer;
       problem.answered = true;
+      missStreak = 0;                // a correct answer breaks any miss streak
       fireAnswerLaser(px, py);
       explodeProblem(px, py, pts);   // destroyed immediately (no travel time)
       wipeSpeechForNext();           // clear the spoken answer the moment the problem is blasted
@@ -2395,6 +2529,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       opt.wrong = true;
       flash(opt.x+opt.w/2, opt.y+opt.h/2, '#fda4af');
       resetAmmo('💥 WRONG — ammo reset!');
+      registerMiss();                // several in a row auto-eases the difficulty
     }
     updateHUD();
   }
@@ -2413,7 +2548,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       const prevGrade = gradeOf(game.level);
       game.level++;
       game.problemsThisLevel = 0;
-      game.neededPerLevel = 4 + Math.floor(game.level/3);
+      game.neededPerLevel = neededFor(game.level);
       const newGrade = gradeOf(game.level);
       showLevelUp(game.level, newGrade > prevGrade);
     }
@@ -2505,7 +2640,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
 
   // Choose an asteroid tier — tougher tiers become more common as you climb.
   function pickAsteroidTier(){
-    const g = gradeOf(game.level);
+    const g = combatGrade();
     const r = Math.random();
     // chance of a tougher (glowing) asteroid grows with grade
     const tough = Math.min(0.6, 0.12 + g*0.06);
@@ -2524,7 +2659,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const speedScale = (tier===0?1: 0.8); // tougher ones drift a bit slower (chunky)
     if (fromTop) {
       x = randInt(40, W-40); y = -r-10;
-      vx = (Math.random()-0.5)*1.4; vy = (0.8 + Math.random()*1.2 + game.level*0.05)*speedScale;
+      vx = (Math.random()-0.5)*1.4; vy = (0.8 + Math.random()*1.2 + combatLevel()*0.05)*speedScale;
     } else {
       const left = Math.random()<0.5;
       x = left ? -r-10 : W+r+10; y = randInt(40, H*0.6);
@@ -2537,7 +2672,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     // (Ammo-upgrade prizes are no longer asteroids — they float in on their own.)
     let special = (Math.random() < 0.05) ? 'bomb' : null;
     const rr = special ? r + 14 : r;
-    const hp = special ? 28 + game.level*2 : T.hp;
+    const hp = special ? 28 + combatLevel()*2 : T.hp;
     asteroids.push({
       x,y,vx,vy, r:rr, rot:Math.random()*6, vr:(Math.random()-0.5)*0.05, verts, vn,
       tier, hp, maxHp:hp, hitFlash:0, special
@@ -2603,6 +2738,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     rank: document.getElementById('hudRank'),
     score: document.getElementById('hudScore'),
     laser: document.getElementById('hudLaser'),
+    mode: document.getElementById('hudMode'),
     grade: document.getElementById('hudGrade'),
     solved: document.getElementById('hudSolved'),
     ammo: document.getElementById('hudAmmo'),
@@ -2617,6 +2753,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const wl = weaponLevel();
     hud.laser.textContent = 'L' + wl + ' ' + weaponName(wl);
     hud.laser.style.color = wl>=24 ? '#ff8e3c' : wl>=16 ? '#ffd36e' : wl>=8 ? '#7ef9ff' : wl>=4 ? '#c4b5fd' : '#7dd3fc';
+    if (hud.mode) hud.mode.textContent = MODE.icon + ' ' + MODE.name;
     hud.grade.textContent = stageName(game.level);
     hud.solved.textContent = game.solvedCount;
     hud.ammo.textContent = wingBombs>0 ? ('💣×' + wingBombs) : 'none';
@@ -2755,6 +2892,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
         spawnEnemyFromMiss(problem.x, problem.y);   // the fallen problem becomes an enemy
         noticeText = '⚠️ It got through — incoming enemy!'; noticeT = 70;
         problem = null;
+        registerMiss();      // several in a row auto-eases the difficulty
         problemTimer = 18;   // a fresh problem appears quickly
       }
     }
@@ -2914,7 +3052,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     enemyTimer--;
     if (enemyTimer <= 0){
       spawnEnemy();
-      enemyTimer = Math.max(70, 170 - game.level*8) + rnd(60);   // more often at higher levels
+      enemyTimer = Math.max(70, 170 - combatLevel()*8) + rnd(60);   // more often as the run progresses
     }
     for (const e of enemies){
       e.t++;
@@ -2937,7 +3075,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
         }
         e.x = Math.max(30, Math.min(W-30, e.x));
         e.fireCD--;
-        if (e.fireCD <= 0){ enemyFire(e); e.fireCD = Math.max(40, 110 - game.level*5) + rnd(40); }
+        if (e.fireCD <= 0){ enemyFire(e); e.fireCD = Math.max(40, 110 - combatLevel()*5) + rnd(40); }
       }
     }
     // player ammo vs ACTIVE enemies (rising ones are untouchable until they reach the top)
@@ -3002,7 +3140,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
 
     // asteroids — now about a THIRD as frequent (the action is the enemy ships now)
     asteroidTimer--;
-    const spawnRate = Math.max(66, 200 - game.level*12);
+    const spawnRate = Math.max(66, 200 - combatLevel()*12);
     if (asteroidTimer <= 0){ spawnAsteroid(); asteroidTimer = spawnRate; }
     for (const a of asteroids){ a.x += a.vx; a.y += a.vy; a.rot += a.vr; if (a.hitFlash>0) a.hitFlash--; }
     asteroids = asteroids.filter(a => a.y < H+60 && a.y > -80 && a.x > -80 && a.x < W+80);
@@ -4798,9 +4936,9 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   function startGame(){
     const nm = document.getElementById('nameInput').value.trim();
     playerName = nm || "Pilot";
-    game.score=0; game.level=1; game.solvedCount=0; game.lives=3;
-    game.problemsThisLevel=0; game.neededPerLevel=4; game.log=[];
-    game.charge=0;
+    game.score=0; game.level=MODE.start; game.solvedCount=0; game.lives=3;
+    game.problemsThisLevel=0; game.neededPerLevel=neededFor(game.level); game.log=[];
+    game.charge=0; missStreak=0;
     mouseDown=false; beamActive=false; noticeT=0; smartBombCD=0; sideBulletCD=0;
     boss=null; enemyShots=[]; minions=[]; enemies=[]; enemyTimer=240; ammoPrizeTimer=600; correctSinceBoss=0; bossNum=0;
     factQueue=[]; factQueueStage=-1; lastAnswer=null; shieldTier=0;
@@ -4826,6 +4964,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     hud.el.classList.remove('hidden');
     { const pb = document.getElementById('pauseBtn'); if (pb){ pb.classList.remove('hidden'); pb.textContent = '⏸'; } }
     if (bombBtnEl) bombBtnEl.classList.toggle('hidden', !touchMode);
+    if (easeBtnEl) easeBtnEl.classList.remove('hidden');
     updateHUD();
     startListening();   // begin voice recognition if mic was granted
     tryLock();          // capture the cursor inside the game window
@@ -4840,6 +4979,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     paused = false;
     { const pb = document.getElementById('pauseBtn'); if (pb) pb.classList.add('hidden'); }
     if (bombBtnEl) bombBtnEl.classList.add('hidden');
+    if (easeBtnEl) easeBtnEl.classList.add('hidden');
     buildResults();
     document.getElementById('resultScreen').classList.remove('hidden');
     submitScoreToBoard();   // post the run to the global leaderboard (if signed in)
@@ -4917,7 +5057,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       ship.destroyed ? "💥 SHIP DESTROYED" : "MISSION REPORT";
     document.getElementById('resultSub').textContent =
       (ship.destroyed ? `Pilot ${playerName}'s ship went down! ` : `Pilot ${playerName} — `)
-      + `Reached: ${stageName(game.level)} • ${durSec}s in space`;
+      + `${MODE.icon} ${MODE.name} • Reached: ${stageName(game.level)} • ${durSec}s in space`;
 
     document.getElementById('resultStats').innerHTML = `
       <div class="stat"><div class="big gold">${game.score}</div><div class="lab">Score</div></div>
@@ -4985,6 +5125,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     lines.push(`Date:         ${now.toLocaleString()}`);
     const dg = diagnose();
     lines.push(`Topic:        Addition, Subtraction & early Algebra (progressive ladder)`);
+    lines.push(`Mode:         ${MODE.name}`);
     lines.push(`Reached:      ${stageName(game.level)}`);
     lines.push(`Best-fit placement: ${dg.placementName}`);
     lines.push(`Time played:  ${durSec} seconds`);
@@ -5042,6 +5183,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     lines.push(JSON.stringify({
       pilot: playerName,
       date: now.toISOString(),
+      mode: MODE.key,
       topic: "addition_subtraction_algebra",
       reachedStage: stageName(game.level),
       reachedStageIndex: gradeOf(game.level)-1,

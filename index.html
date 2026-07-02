@@ -4020,6 +4020,34 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       default: bossReaper(R, sc, A, B, t, eye); break;
     }
 
+    // ESCALATION GEAR — later bosses visibly gain hardware, so each one reads as a bigger
+    // deal: orbiting energy shards (boss 3+), a counter-rotating drone ring (6+), and a
+    // crackling power halo (9+).
+    if (boss.num >= 3){
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      const n1 = Math.min(8, 2 + boss.num);
+      for (let i=0;i<n1;i++){
+        const a = t*1.4 + i*(Math.PI*2/n1);
+        const sx = Math.cos(a)*R*1.35, sy = Math.sin(a)*R*0.55;      // elliptical orbit
+        ctx.fillStyle = `rgba(${sc.glow},0.9)`;
+        ctx.save(); ctx.translate(sx,sy); ctx.rotate(a*2);
+        ctx.beginPath(); ctx.moveTo(0,-R*0.09); ctx.lineTo(R*0.05,R*0.07); ctx.lineTo(-R*0.05,R*0.07);
+        ctx.closePath(); ctx.fill(); ctx.restore();
+      }
+      if (boss.num >= 6){
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        for (let i=0;i<6;i++){
+          const a = -t*1.9 + i*(Math.PI/3);
+          ctx.beginPath(); ctx.arc(Math.cos(a)*R*1.6, Math.sin(a)*R*0.75, R*0.045, 0, 7); ctx.fill();
+        }
+      }
+      if (boss.num >= 9){
+        ctx.strokeStyle = `rgba(${sc.glow},${0.35+0.25*Math.sin(t*7)})`; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.ellipse(0,0,R*1.75,R*0.9,0,0,7); ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     // BATTLE DAMAGE — once the shield is down, scorch blotches (and smoldering embers) appear and
     // grow as HP drops, so you can SEE how close it is to destruction.
     if (boss.dmgLevel > 0){
@@ -4102,6 +4130,19 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     pod.addColorStop(0,'#aab6c8'); pod.addColorStop(1,B);
     ctx.fillStyle=pod; ctx.strokeStyle=sc.edge; ctx.lineWidth=3;
     ctx.beginPath(); ctx.arc(0,0,R*0.62,0,7); ctx.fill(); ctx.stroke();
+    // spinning targeting ring around the pod + power-veins feeding the wing panels
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.save(); ctx.rotate(t*1.1);
+    ctx.strokeStyle=`rgba(${sc.glow},0.8)`; ctx.lineWidth=2.5; ctx.setLineDash([R*0.18,R*0.14]);
+    ctx.beginPath(); ctx.arc(0,0,R*0.78,0,7); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+    for (const side of [-1,1]){
+      const vg=ctx.createLinearGradient(side*R*0.7,0,side*R*1.55,0);
+      vg.addColorStop(0,`rgba(${sc.glow},${0.5+0.3*eye})`); vg.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.strokeStyle=vg; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.moveTo(side*R*0.7,0); ctx.lineTo(side*R*1.5,0); ctx.stroke();
+    }
+    ctx.restore();
     underBarrel(0, R*0.34, sc);
     bossCore(0,0,R*0.3,sc,eye);
   }
@@ -4120,9 +4161,12 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       ctx.closePath(); ctx.fill(); ctx.stroke();
       // wingtip cannon
       underBarrel(side*R*1.12, R*0.2, sc);
-      // feather lines
+      // layered feather blades
       ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=1.5;
-      ctx.beginPath(); ctx.moveTo(side*R*0.3,R*0.1); ctx.lineTo(side*R*1.0,R*0.4); ctx.stroke();
+      for (let f=0; f<3; f++){
+        ctx.beginPath(); ctx.moveTo(side*R*(0.28+f*0.05), R*(0.08+f*0.10));
+        ctx.lineTo(side*R*(1.0+f*0.06), R*(0.34+f*0.10)); ctx.stroke();
+      }
       ctx.strokeStyle=sc.edge;
     }
     // central head / neck pointing down
@@ -4133,6 +4177,12 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     ctx.moveTo(0,-R*0.75); ctx.lineTo(R*0.3,-R*0.3); ctx.lineTo(R*0.18,R*0.9);
     ctx.lineTo(-R*0.18,R*0.9); ctx.lineTo(-R*0.3,-R*0.3);
     ctx.closePath(); ctx.fill(); ctx.stroke();
+    // burning predator EYES glaring down at the player
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=`rgba(255,64,54,${0.65+0.35*eye})`;
+    ctx.shadowColor='#ff5040'; ctx.shadowBlur=12;
+    for (const s of [-1,1]){ ctx.beginPath(); ctx.arc(s*R*0.09, R*0.62, R*0.055, 0, 7); ctx.fill(); }
+    ctx.restore();
     underBarrel(0, R*0.26, sc);
     bossCore(0,-R*0.1,R*0.26,sc,eye);
   }
@@ -4154,6 +4204,17 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     for (let i=1;i<=5;i++){ const yy=-R*0.55 + i*R*0.28; const xx=R*0.9*(1 - i/6.5);
       ctx.beginPath(); ctx.moveTo(-xx,yy); ctx.lineTo(xx,yy); ctx.stroke(); }
     ctx.beginPath(); ctx.moveTo(0,-R*0.7); ctx.lineTo(0,R*1.0); ctx.stroke();
+    // rows of tiny lit windows — reads as a crewed capital ship
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=`rgba(${sc.glow},0.75)`;
+    for (let row=0; row<4; row++){
+      const yy=-R*0.38+row*R*0.30, span=R*0.78*(1-row*0.15);
+      for (let wc=-3; wc<=3; wc++){
+        if ((wc+row)%2===0) continue;
+        ctx.fillRect(wc*span*0.28-R*0.02, yy, R*0.04, Math.max(1.5, R*0.025));
+      }
+    }
+    ctx.restore();
     // raised command tower near the back
     ctx.fillStyle=A; ctx.strokeStyle=sc.edge; ctx.lineWidth=2.5;
     roundRect(-R*0.16,-R*0.62,R*0.32,R*0.3,3); ctx.fill(); ctx.stroke();
@@ -4166,6 +4227,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       ctx.fillStyle=eg; ctx.beginPath(); ctx.arc(x,-R*0.7,R*0.18,0,7); ctx.fill(); }
     ctx.restore();
     underBarrel(-R*0.45, R*0.2, sc); underBarrel(R*0.45, R*0.2, sc);
+    underBarrel(-R*0.78, R*0.14, sc); underBarrel(R*0.78, R*0.14, sc);   // outer batteries
   }
 
   // 3) HIVE CUBE — a Borg-style industrial cube: blocky greebles + a glowing scan trench.
@@ -4189,6 +4251,23 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const tg=ctx.createLinearGradient(0,ty-6,0,ty+6);
     tg.addColorStop(0,'rgba(0,0,0,0)'); tg.addColorStop(0.5,sc.eye); tg.addColorStop(1,'rgba(0,0,0,0)');
     ctx.fillStyle=tg; ctx.fillRect(-s,ty-6,s*2,12); ctx.restore();
+    // counter-rotating inner core frames — visible alien machinery churning inside
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.save(); ctx.rotate(-t*0.6);
+    ctx.strokeStyle=`rgba(${sc.glow},0.5)`; ctx.lineWidth=2.5;
+    ctx.strokeRect(-s*0.52,-s*0.52,s*1.04,s*1.04);
+    ctx.rotate(t*1.25);
+    ctx.strokeStyle=`rgba(${sc.glow},0.32)`;
+    ctx.strokeRect(-s*0.34,-s*0.34,s*0.68,s*0.68);
+    ctx.restore();
+    // corner beacons blink in sequence
+    for (let i=0;i<4;i++){
+      const cx=(i===1||i===2)?s:-s, cy=(i>=2)?s:-s;
+      const bl=0.5+0.5*Math.sin(t*4+i*Math.PI/2);
+      ctx.fillStyle=`rgba(${sc.glow},${0.35+0.6*bl})`;
+      ctx.beginPath(); ctx.arc(cx,cy,R*0.07,0,7); ctx.fill();
+    }
+    ctx.restore();
     bossCore(0,0,R*0.34,sc,eye);
     underBarrel(-s*0.5, R*0.22, sc); underBarrel(s*0.5, R*0.22, sc);
   }
@@ -4214,6 +4293,15 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       const bl=0.5+0.5*Math.sin(t*5+i);
       ctx.fillStyle=`rgba(${sc.glow},${0.4+bl*0.5})`;
       ctx.beginPath(); ctx.arc(x,y,R*0.07,0,7); ctx.fill(); }
+    ctx.restore();
+    // pulsing TRACTOR BEAM cone sweeping the ground below — pure UFO menace
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    const bp2 = 0.30 + 0.22*Math.sin(t*2.4);
+    const cone = ctx.createLinearGradient(0,R*0.3,0,R*1.7);
+    cone.addColorStop(0,`rgba(${sc.glow},${bp2})`); cone.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=cone;
+    ctx.beginPath(); ctx.moveTo(-R*0.28,R*0.3); ctx.lineTo(R*0.28,R*0.3);
+    ctx.lineTo(R*0.8,R*1.7); ctx.lineTo(-R*0.8,R*1.7); ctx.closePath(); ctx.fill();
     ctx.restore();
     // bottom tractor-beam emitter pointing down
     bossCore(0,R*0.28,R*0.2,sc,eye);
@@ -4255,6 +4343,18 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     bossCore(0,-R*0.15,R*0.36,sc,eye);
     ctx.fillStyle='#180004';
     ctx.beginPath(); ctx.ellipse(0,-R*0.15,R*0.08,R*0.22,0,0,7); ctx.fill();
+    // twin hunting sub-eyes + curved mandible hooks reaching toward the player
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=`rgba(255,70,60,${0.55+0.4*eye})`;
+    for (const s of [-1,1]){ ctx.beginPath(); ctx.arc(s*R*0.44,-R*0.34,R*0.08,0,7); ctx.fill(); }
+    ctx.restore();
+    ctx.strokeStyle=sc.edge; ctx.lineWidth=R*0.08; ctx.lineCap='round';
+    for (const s of [-1,1]){
+      ctx.beginPath();
+      ctx.moveTo(s*R*0.30,R*0.42);
+      ctx.quadraticCurveTo(s*R*0.58,R*0.72, s*R*0.20,R*0.88);
+      ctx.stroke();
+    }
   }
 
   function drawEnemyShots(){

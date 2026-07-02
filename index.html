@@ -2887,7 +2887,14 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   // ---------- Update ----------
   let asteroidTimer = 0, problemTimer = 0;
 
+  let lastFrameT = 0;   // for delta-time-scaled easing (smooth at ANY frame rate)
+
   function update() {
+    // frame delta in 60fps units — drives the boss's easing so motion never stutters
+    const frameNow = performance.now();
+    const dtF = lastFrameT ? Math.min(3, Math.max(0.25, (frameNow - lastFrameT)/16.667)) : 1;
+    lastFrameT = frameNow;
+
     // stars drift
     for (const s of stars){ s.y += s.z*0.4; if (s.y > H) { s.y = 0; s.x = Math.random()*W; } }
     // occasional shooting star streaking across the top of the sky
@@ -3085,33 +3092,43 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     // ---- BOSS spawn / move / fire ----
     if (!boss && correctSinceBoss >= BOSS_EVERY){ spawnBoss(); correctSinceBoss = 0; }
     if (boss && !boss.dead){
-      boss.y += (boss.ty - boss.y) * 0.04;
-      boss.bob += 0.03 + boss.num*0.004;          // patrols faster as bosses get higher
+      // ---- SMOOTH, FLUID MOVEMENT --------------------------------------------------------
+      // Raw targets can JUMP (hide toggles, evasion flips) — so the boss never chases them
+      // directly. It chases a LOW-PASSED target (boss.tx / boss.tyS), then glides toward
+      // that, and every easing factor is delta-time corrected (1-(1-k)^dt), so the motion
+      // is butter-smooth at any frame rate: it weaves and banks, never stutters or lurches.
+      boss.bob += (0.028 + boss.num*0.003) * dtF;
       // occasionally the boss tucks BEHIND the falling problem so your shots get blocked,
       // pushing you to answer fast to clear the path. Not constant — it patrols otherwise.
-      boss.hideCD = (boss.hideCD || 0) - 1;
-      if (boss.hideCD <= 0){ boss.hiding = Math.random() < 0.45; boss.hideCD = 160 + rnd(200); }
-      let targetX;
+      boss.hideCD = (boss.hideCD || 0) - dtF;
+      if (boss.hideCD <= 0){ boss.hiding = Math.random() < 0.45; boss.hideCD = 200 + rnd(220); }
+      let rawX;
       if (boss.hiding && problem && !problem.answered && problem.y > 50){
-        targetX = problem.x + Math.sin(boss.bob*1.6) * 36;   // tuck behind with organic drift
+        rawX = problem.x + Math.sin(boss.bob*1.6) * 36;   // tuck behind with organic drift
       } else {
-        targetX = W/2 + Math.sin(boss.bob) * Math.min(0.40*W, 180 + boss.num*16);   // wider sweeps
+        rawX = W/2 + Math.sin(boss.bob) * Math.min(0.40*W, 180 + boss.num*16);   // wide sweeps
       }
-      // ATHLETIC EVASION — the boss refuses to sit in your line of fire. The moment your ship lines
-      // up under it, it JUKES away fast (and quicker for higher bosses), so you must chase it around
-      // instead of parking the beam on it. Boss 1 is sluggish; boss 10 is a slippery acrobat.
-      const evadeRange = 130 + boss.num*16;
-      if (Math.abs(boss.x - ship.x) < evadeRange){
-        const away = Math.sign(boss.x - ship.x || (Math.random()-0.5));
-        targetX += away * Math.min(300, 90 + boss.num*24);
-      }
-      targetX = Math.max(boss.r, Math.min(W - boss.r, targetX));
-      const evading = Math.abs(boss.x - ship.x) < evadeRange;
-      const ease = Math.min(0.42, (evading ? 0.16 : 0.08) + boss.num*0.011);   // darts when threatened
-      boss.x += (targetX - boss.x) * ease;
-      // a little vertical juke too, so it's not a flat slider — feels alive & hard to track
-      boss.y += Math.sin(boss.bob*1.9) * (0.5 + boss.num*0.14);
-      boss.y = Math.max(70, Math.min(H*0.34, boss.y));
+      // EVASION as a smooth repulsion field, not a binary jump: the push fades in with a
+      // gaussian falloff as your ship lines up beneath it — the boss slides away gracefully,
+      // and higher bosses slide farther & faster. No sudden target teleports.
+      const evadeRange = 150 + boss.num*16;
+      const dxE = boss.x - ship.x;
+      const near = Math.exp(-(dxE*dxE)/(2*evadeRange*evadeRange));   // 1 = right under it, →0 far away
+      if (dxE !== 0) boss.evadeSign = Math.sign(dxE);
+      rawX += (boss.evadeSign || 1) * near * Math.min(300, 120 + boss.num*26);
+      rawX = Math.max(boss.r, Math.min(W - boss.r, rawX));
+      // vertical: entrance glide down to the hover line, then a gentle weave around it
+      const rawY = Math.max(70, Math.min(H*0.34,
+        boss.ty + Math.sin(boss.bob*1.9) * (10 + boss.num*2.4)));
+      if (boss.tx == null){ boss.tx = boss.x; boss.tyS = rawY; }
+      const kT = 1 - Math.pow(1 - 0.06, dtF);               // target low-pass
+      boss.tx  += (rawX - boss.tx)  * kT;
+      boss.tyS += (rawY - boss.tyS) * kT;
+      const evading = near > 0.5;
+      const kM = 1 - Math.pow(1 - Math.min(0.30, (evading ? 0.13 : 0.055) + boss.num*0.008), dtF);
+      boss.x += (boss.tx - boss.x) * kM;
+      const kY = (boss.y < boss.ty - 40) ? (1 - Math.pow(1 - 0.05, dtF)) : kM;   // entrance vs cruise
+      boss.y += (boss.tyS - boss.y) * kY;
       if (boss.hitFlash > 0) boss.hitFlash--;
       if (boss.shakeT > 0) boss.shakeT--;
       if (boss.telegraph > 0) boss.telegraph--;
@@ -4495,111 +4512,178 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   // and twin engine nacelles with animated plumes.
   // ============================================================================
   function drawEpicShip(g, R, color, t, thrust, power){
-    const flick = 0.7 + Math.random()*0.3;
     const p = Math.max(1, power || 1);
     const pe = Math.min(p, 30);                 // visual upgrades cap out (so it never gets silly)
-    const plume = (0.7 + pe*0.04);              // bigger plumes as ammo gets more amazing
-    // main engine positions; more boosters unlock with power
-    const engX = [-0.26*R, 0.26*R];
-    if (p >= 8) engX.push(0);                   // central booster
-    if (p >= 14) engX.push(-0.48*R, 0.48*R);    // outboard boosters
-    // ---- engine plumes (behind everything) ----
+    const flick = 0.75 + Math.random()*0.25;
+    const plume = 0.75 + pe*0.045;              // bigger plumes as ammo gets more amazing
+    // engine layout: twin mains; central booster (p≥8); outboard boosters (p≥14)
+    const engines = [[-0.30*R, 1.02*R, 0.13*R], [0.30*R, 1.02*R, 0.13*R]];
+    if (p >= 8)  engines.push([0, 1.10*R, 0.10*R]);
+    if (p >= 14) engines.push([-0.62*R, 0.88*R, 0.085*R], [0.62*R, 0.88*R, 0.085*R]);
+
+    // ---- layered exhaust plumes (colored sheath + white-hot core) ----
     if (thrust){
       g.save(); g.globalCompositeOperation = 'lighter';
-      for (const ex of engX){
-        const fy = 0.95*R, len = (0.7*R)*flick*plume;
-        const fg = g.createLinearGradient(0, fy, 0, fy+len);
-        fg.addColorStop(0,'#ffffff'); fg.addColorStop(0.35, color); fg.addColorStop(1,'rgba(0,0,0,0)');
+      for (const [ex,ey,er] of engines){
+        const len = (1.15*R) * flick * plume;
+        let fg = g.createLinearGradient(0, ey, 0, ey+len);
+        fg.addColorStop(0, color); fg.addColorStop(0.45, color); fg.addColorStop(1,'rgba(0,0,0,0)');
+        g.globalAlpha = 0.55; g.fillStyle = fg;
+        g.beginPath();
+        g.moveTo(ex-er*1.15, ey); g.lineTo(ex+er*1.15, ey);
+        g.quadraticCurveTo(ex+er*0.45, ey+len*0.62, ex, ey+len);
+        g.quadraticCurveTo(ex-er*0.45, ey+len*0.62, ex-er*1.15, ey);
+        g.closePath(); g.fill();
+        g.globalAlpha = 0.95;
+        fg = g.createLinearGradient(0, ey, 0, ey+len*0.55);
+        fg.addColorStop(0,'#ffffff'); fg.addColorStop(1,'rgba(255,255,255,0)');
         g.fillStyle = fg;
-        g.beginPath(); g.moveTo(ex-0.12*R, fy); g.lineTo(ex+0.12*R, fy); g.lineTo(ex, fy+len); g.closePath(); g.fill();
+        g.beginPath(); g.moveTo(ex-er*0.5, ey); g.lineTo(ex+er*0.5, ey); g.lineTo(ex, ey+len*0.55);
+        g.closePath(); g.fill();
       }
-      g.restore();
+      g.globalAlpha = 1; g.restore();
     }
-    // ---- engine nacelles ----
-    for (const ex of engX){
-      g.fillStyle = '#222a44'; g.strokeStyle = color; g.lineWidth = 1.6;
-      roundRectP(g, ex-0.13*R, 0.45*R, 0.26*R, 0.55*R, 4); g.fill(); g.stroke();
+
+    // ---- WINGS: big swept blades, glowing accent leading edges, winglet fins ----
+    for (const s of [-1,1]){
+      const wg = g.createLinearGradient(s*0.26*R, 0, s*1.55*R, 0.8*R);
+      wg.addColorStop(0,'#46527e'); wg.addColorStop(0.55,'#232c4e'); wg.addColorStop(1,'#141a30');
+      g.fillStyle = wg; g.strokeStyle = 'rgba(190,215,255,0.35)'; g.lineWidth = 1.6;
+      pathPoly(g, [[s*0.26*R,-0.18*R],[s*1.58*R,0.52*R],[s*1.30*R,0.86*R],[s*0.30*R,0.62*R]]);
+      g.fill(); g.stroke();
+      // glowing leading edge in the pilot's color
       g.save(); g.globalCompositeOperation='lighter';
-      g.fillStyle = color; g.shadowColor = color; g.shadowBlur = 10;
-      g.beginPath(); g.ellipse(ex, 0.95*R, 0.1*R, 0.05*R, 0, 0, 7); g.fill();
+      g.strokeStyle = color; g.lineWidth = 2.4; g.shadowColor = color; g.shadowBlur = 10;
+      g.beginPath(); g.moveTo(s*0.26*R, -0.18*R); g.lineTo(s*1.58*R, 0.52*R); g.stroke();
       g.restore();
-    }
-    // ---- swept delta WINGS (drawn under the hull) ----
-    drawWingP(g, R, color, -1);
-    drawWingP(g, R, color, 1);
-    // ---- POWER blasters: cool wing-tip cannons that appear as your ammo upgrades ----
-    if (p >= 4){
-      for (const sgn of [-1, 1]){
-        const wx = sgn*1.32*R, wy = 0.5*R;
-        g.fillStyle = '#1a2138'; g.strokeStyle = color; g.lineWidth = 1.6;
-        roundRectP(g, wx-0.07*R, wy-0.45*R, 0.14*R, 0.6*R, 3); g.fill(); g.stroke();
-        g.save(); g.globalCompositeOperation='lighter'; g.fillStyle = color; g.shadowColor=color; g.shadowBlur=8;
-        g.beginPath(); g.arc(wx, wy-0.45*R, 0.05*R, 0, 7); g.fill(); g.restore();
+      // panel seam
+      g.strokeStyle='rgba(255,255,255,0.10)'; g.lineWidth=1.2;
+      g.beginPath(); g.moveTo(s*0.42*R, 0.08*R); g.lineTo(s*1.26*R, 0.62*R); g.stroke();
+      // wingtip winglet
+      g.fillStyle = '#0f1425'; g.strokeStyle = color; g.lineWidth = 1.6;
+      g.beginPath(); g.moveTo(s*1.58*R,0.52*R); g.lineTo(s*1.66*R,0.30*R); g.lineTo(s*1.50*R,0.70*R);
+      g.closePath(); g.fill(); g.stroke();
+      // blinking nav strobe (alternates sides — the ship feels ALIVE)
+      if (Math.sin(t*5 + (s>0 ? 0 : Math.PI)) > 0.55){
+        g.save(); g.globalCompositeOperation='lighter';
+        g.fillStyle='#ffffff'; g.shadowColor=color; g.shadowBlur=12;
+        g.beginPath(); g.arc(s*1.60*R, 0.50*R, Math.max(1.6, 0.045*R), 0, 7); g.fill();
+        g.restore();
       }
     }
-    if (p >= 20){      // glowing energy rings around the engines at very high tiers
-      g.save(); g.globalCompositeOperation='lighter'; g.strokeStyle = color; g.lineWidth = 2;
-      g.globalAlpha = 0.5 + 0.3*Math.sin(t*6);
-      for (const ex of engX){ g.beginPath(); g.ellipse(ex, 0.8*R, 0.18*R, 0.07*R, 0, 0, 7); g.stroke(); }
+    // ---- canards (small forward fins) ----
+    for (const s of [-1,1]){
+      g.fillStyle = '#39456e'; g.strokeStyle='rgba(190,215,255,0.3)'; g.lineWidth=1.3;
+      pathPoly(g, [[s*0.20*R,-0.72*R],[s*0.62*R,-0.42*R],[s*0.50*R,-0.28*R],[s*0.18*R,-0.40*R]]);
+      g.fill(); g.stroke();
+    }
+
+    // ---- engine block + nozzle bells ----
+    g.fillStyle = '#1a2138'; g.strokeStyle = 'rgba(160,190,255,0.4)'; g.lineWidth = 1.6;
+    roundRectP(g, -0.46*R, 0.55*R, 0.92*R, 0.5*R, 0.1*R); g.fill(); g.stroke();
+    for (const [ex,ey,er] of engines){
+      g.fillStyle = '#0c101e'; g.strokeStyle = '#5a6a9a'; g.lineWidth = 1.4;
+      g.beginPath(); g.ellipse(ex, ey, er*1.05, er*0.5, 0, 0, 7); g.fill(); g.stroke();
+      g.save(); g.globalCompositeOperation='lighter';
+      g.fillStyle = thrust ? '#ffffff' : color; g.shadowColor = color; g.shadowBlur = 12;
+      g.beginPath(); g.ellipse(ex, ey, er*0.62, er*0.3, 0, 0, 7); g.fill();
       g.restore();
     }
-    // ---- main HULL: metallic cylinder sheen (directional light from upper-left) ----
+
+    // ---- FUSELAGE: sleek needle, metallic sheen lit from upper-left ----
     const hull = [
-      [0,-1.5*R],[0.28*R,-0.55*R],[0.5*R,-0.05*R],[0.34*R,0.72*R],
-      [0.18*R,1.02*R],[-0.18*R,1.02*R],[-0.34*R,0.72*R],[-0.5*R,-0.05*R],[-0.28*R,-0.55*R]
+      [0,-1.62*R],
+      [0.16*R,-1.05*R],[0.34*R,-0.35*R],[0.42*R,0.18*R],[0.34*R,0.72*R],[0.20*R,1.02*R],
+      [-0.20*R,1.02*R],[-0.34*R,0.72*R],[-0.42*R,0.18*R],[-0.34*R,-0.35*R],[-0.16*R,-1.05*R],
     ];
-    const hg2 = g.createLinearGradient(-0.5*R,0,0.5*R,0);
-    hg2.addColorStop(0,'#222a44'); hg2.addColorStop(0.3,'#586a9c');
-    hg2.addColorStop(0.5,'#eaf1ff'); hg2.addColorStop(0.62,'#aab8d8'); hg2.addColorStop(1,'#2c3458');
-    g.fillStyle = hg2; g.strokeStyle = color; g.lineWidth = 2.4;
+    const hg2 = g.createLinearGradient(-0.42*R,0,0.42*R,0);
+    hg2.addColorStop(0,'#1c2440'); hg2.addColorStop(0.32,'#5d6f9f');
+    hg2.addColorStop(0.48,'#f0f5ff'); hg2.addColorStop(0.60,'#9fb0d4'); hg2.addColorStop(1,'#252d4e');
+    g.fillStyle = hg2; g.strokeStyle = color; g.lineWidth = 2.2;
     g.shadowColor = color; g.shadowBlur = 12;
     pathPoly(g, hull); g.fill(); g.stroke();
     g.shadowBlur = 0;
-    // vertical nose highlight (specular sheen)
-    g.save(); g.globalCompositeOperation='lighter';
-    const sg = g.createLinearGradient(0,-1.4*R,0,0.6*R);
-    sg.addColorStop(0,'rgba(255,255,255,0.55)'); sg.addColorStop(1,'rgba(255,255,255,0)');
-    g.fillStyle = sg; g.fillRect(-0.08*R,-1.4*R,0.16*R,2.0*R);
-    g.restore();
-    // armor seam lines
-    g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(-0.34*R,0.1*R); g.lineTo(0.34*R,0.1*R); g.stroke();
-    g.beginPath(); g.moveTo(-0.26*R,0.45*R); g.lineTo(0.26*R,0.45*R); g.stroke();
-    // accent racing stripes in the chosen color
-    g.strokeStyle = color; g.lineWidth = 2; g.globalAlpha = 0.9;
-    g.beginPath(); g.moveTo(-0.12*R,-0.9*R); g.lineTo(-0.16*R,0.9*R); g.stroke();
-    g.beginPath(); g.moveTo(0.12*R,-0.9*R);  g.lineTo(0.16*R,0.9*R);  g.stroke();
+    // chine + panel seams
+    g.strokeStyle = 'rgba(10,14,30,0.5)'; g.lineWidth = 1.2;
+    g.beginPath(); g.moveTo(-0.16*R,-1.02*R); g.lineTo(-0.30*R,0.7*R); g.stroke();
+    g.beginPath(); g.moveTo(0.16*R,-1.02*R); g.lineTo(0.30*R,0.7*R); g.stroke();
+    g.strokeStyle='rgba(255,255,255,0.16)';
+    g.beginPath(); g.moveTo(-0.32*R,0.02*R); g.lineTo(0.32*R,0.02*R); g.stroke();
+    g.beginPath(); g.moveTo(-0.26*R,0.5*R); g.lineTo(0.26*R,0.5*R); g.stroke();
+    // accent racing stripes
+    g.strokeStyle = color; g.globalAlpha = 0.85; g.lineWidth = 1.8;
+    g.beginPath(); g.moveTo(-0.09*R,-1.2*R); g.lineTo(-0.13*R,0.95*R); g.stroke();
+    g.beginPath(); g.moveTo(0.09*R,-1.2*R);  g.lineTo(0.13*R,0.95*R);  g.stroke();
     g.globalAlpha = 1;
-    // ---- pulsing REACTOR core in the belly (energy heart) ----
+    // nose specular sheen
+    g.save(); g.globalCompositeOperation='lighter';
+    const sg2 = g.createLinearGradient(0,-1.55*R,0,0.2*R);
+    sg2.addColorStop(0,'rgba(255,255,255,0.6)'); sg2.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle = sg2; g.fillRect(-0.05*R,-1.55*R,0.10*R,1.7*R);
+    g.restore();
+    // intake vents at the wing roots, lit in the accent color
+    for (const s of [-1,1]){
+      g.fillStyle = '#0b0f1e';
+      roundRectP(g, s*0.30*R - 0.055*R, -0.16*R, 0.11*R, 0.34*R, 0.04*R); g.fill();
+      g.save(); g.globalCompositeOperation='lighter'; g.globalAlpha = 0.5; g.fillStyle = color;
+      roundRectP(g, s*0.30*R - 0.025*R, -0.13*R, 0.05*R, 0.28*R, 0.02*R); g.fill();
+      g.restore();
+    }
+
+    // ---- pulsing REACTOR core with a spinning gyro ring ----
     const rp = 0.5 + 0.5*Math.sin(t*4);
     g.save(); g.globalCompositeOperation='lighter';
-    const rc2 = g.createRadialGradient(0,0.18*R,1, 0,0.18*R, 0.3*R*(0.85+0.25*rp));
+    const rc2 = g.createRadialGradient(0,0.30*R,1, 0,0.30*R, 0.26*R*(0.85+0.3*rp));
     rc2.addColorStop(0,'#ffffff'); rc2.addColorStop(0.45,color); rc2.addColorStop(1,'rgba(0,0,0,0)');
-    g.fillStyle = rc2; g.beginPath(); g.arc(0,0.18*R, 0.3*R*(0.85+0.25*rp), 0, 7); g.fill();
-    g.restore();
-    // ---- glassy CANOPY with glint ----
-    const cg = g.createRadialGradient(-0.05*R,-0.62*R,1, 0,-0.5*R,0.4*R);
-    cg.addColorStop(0,'#ffffff'); cg.addColorStop(0.45,'#8fe0ff'); cg.addColorStop(1,'#15366b');
-    g.fillStyle = cg; g.strokeStyle = 'rgba(220,245,255,0.8)'; g.lineWidth = 1.4;
-    g.beginPath(); g.ellipse(0,-0.5*R, 0.17*R, 0.32*R, 0, 0, 7); g.fill(); g.stroke();
-    g.fillStyle = 'rgba(255,255,255,0.85)';
-    g.beginPath(); g.ellipse(-0.05*R,-0.62*R, 0.05*R, 0.09*R, 0, 0, 7); g.fill();
-    // glowing nose tip
+    g.fillStyle = rc2; g.beginPath(); g.arc(0,0.30*R, 0.26*R*(0.85+0.3*rp), 0, 7); g.fill();
+    g.strokeStyle = color; g.globalAlpha = 0.5+0.3*rp; g.lineWidth = 1.4;
+    g.beginPath(); g.ellipse(0,0.30*R, 0.15*R, 0.15*R*(0.35+0.3*Math.abs(Math.sin(t*2.2))), 0, 0, 7); g.stroke();
+    g.globalAlpha = 1; g.restore();
+
+    // ---- glassy teardrop CANOPY with frame strut + glint ----
+    const cg = g.createLinearGradient(0,-0.95*R,0,-0.15*R);
+    cg.addColorStop(0,'#eafcff'); cg.addColorStop(0.4,'#7cd9ff'); cg.addColorStop(1,'#123a75');
+    g.fillStyle = cg; g.strokeStyle = 'rgba(225,245,255,0.85)'; g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(0,-0.98*R);
+    g.quadraticCurveTo(0.15*R,-0.72*R, 0.12*R,-0.28*R);
+    g.quadraticCurveTo(0,-0.16*R, -0.12*R,-0.28*R);
+    g.quadraticCurveTo(-0.15*R,-0.72*R, 0,-0.98*R);
+    g.closePath(); g.fill(); g.stroke();
+    g.strokeStyle='rgba(20,50,110,0.55)'; g.lineWidth=1.2;
+    g.beginPath(); g.moveTo(-0.115*R,-0.5*R); g.lineTo(0.115*R,-0.5*R); g.stroke();
+    g.fillStyle='rgba(255,255,255,0.9)';
+    g.beginPath(); g.ellipse(-0.045*R,-0.74*R, 0.035*R, 0.09*R, -0.35, 0, 7); g.fill();
+
+    // ---- POWER add-ons: wingtip cannon pods (p≥4), engine energy rings (p≥20) ----
+    if (p >= 4){
+      for (const s of [-1,1]){
+        const wx = s*1.30*R, wy = 0.58*R;
+        g.fillStyle = '#141b30'; g.strokeStyle = color; g.lineWidth = 1.5;
+        roundRectP(g, wx-0.065*R, wy-0.5*R, 0.13*R, 0.62*R, 0.05*R); g.fill(); g.stroke();
+        g.save(); g.globalCompositeOperation='lighter';
+        g.fillStyle = color; g.shadowColor = color; g.shadowBlur = 8;
+        g.beginPath(); g.arc(wx, wy-0.5*R, 0.045*R, 0, 7); g.fill();
+        g.restore();
+      }
+    }
+    if (p >= 20){
+      g.save(); g.globalCompositeOperation='lighter';
+      g.strokeStyle = color; g.lineWidth = 2; g.globalAlpha = 0.5 + 0.3*Math.sin(t*6);
+      for (const [ex,ey] of engines){ g.beginPath(); g.ellipse(ex, ey-0.12*R, 0.2*R, 0.08*R, 0, 0, 7); g.stroke(); }
+      g.restore();
+    }
+
+    // ---- glowing nose lance ----
     g.save(); g.globalCompositeOperation='lighter';
-    g.fillStyle = color; g.shadowColor=color; g.shadowBlur=10;
-    g.beginPath(); g.arc(0,-1.45*R, 0.05*R, 0, 7); g.fill();
+    g.fillStyle = color; g.shadowColor = color; g.shadowBlur = 12;
+    g.beginPath(); g.arc(0,-1.58*R, Math.max(1.6, 0.05*R), 0, 7); g.fill();
+    g.strokeStyle='rgba(255,255,255,0.85)'; g.lineWidth=1.4;
+    g.beginPath(); g.moveTo(0,-1.62*R); g.lineTo(0,-1.30*R); g.stroke();
     g.restore();
   }
   function roundRectP(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
   function pathPoly(g, pts){ g.beginPath(); pts.forEach((p,i)=> i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1])); g.closePath(); }
-  function drawWingP(g, R, color, sgn){
-    const pts = [[sgn*0.36*R,-0.05*R],[sgn*1.5*R,0.5*R],[sgn*1.15*R,0.82*R],[sgn*0.3*R,0.55*R]];
-    const wg = g.createLinearGradient(0,0,sgn*1.5*R,0.8*R);
-    wg.addColorStop(0,'#3a4366'); wg.addColorStop(1,'#171d33');
-    g.fillStyle = wg; g.strokeStyle = color; g.lineWidth = 2;
-    g.shadowColor = color; g.shadowBlur = 8;
-    pathPoly(g, pts); g.fill(); g.stroke(); g.shadowBlur = 0;
-  }
 
   // Beefy CANNON PODS mounted under the ship's belly — drawn BEFORE the ship so they peek out from
   // under its lower edge (like real underwing/belly hardpoints). They're colored to MATCH the ship

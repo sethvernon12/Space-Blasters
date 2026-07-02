@@ -38,30 +38,43 @@
     touch-action: none;
   }
 
-  /* HUD */
+  /* ============ HUD — one symmetric bar: [stats] [mission] [supplies] ============ */
   #hud {
     position: absolute; top: 0; left: 0; right: 0;
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 14px 22px;
-    padding-top: max(14px, env(safe-area-inset-top));
-    padding-left: max(22px, env(safe-area-inset-left));
-    padding-right: max(22px, env(safe-area-inset-right));
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 12px 18px;
+    padding-top: max(12px, env(safe-area-inset-top));
+    padding-left: max(18px, env(safe-area-inset-left));
+    padding-right: max(18px, env(safe-area-inset-right));
     pointer-events: none;
-    font-size: 18px;
-    text-shadow: 0 0 8px rgba(80,140,255,0.7);
+    text-shadow: 0 0 8px rgba(80,140,255,0.55);
   }
+  .hud-side { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; }
+  .hud-right { justify-content: flex-end; }
   #hud .chip {
-    background: linear-gradient(180deg, rgba(34,52,110,0.6), rgba(13,19,46,0.75));
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 42px; padding: 0 14px; white-space: nowrap;
+    background: linear-gradient(180deg, rgba(34,52,110,0.62), rgba(13,19,46,0.78));
     border: 1px solid rgba(110,160,255,0.45);
-    border-radius: 30px;
-    padding: 6px 16px;
-    margin-right: 10px;
+    border-radius: 21px;
     box-shadow: inset 0 1px 0 rgba(180,220,255,0.16), 0 2px 10px rgba(0,0,0,0.35);
     backdrop-filter: blur(6px);
   }
-  #hud .right { display: flex; }
-  .label { color: #8fb4ff; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
-  .val { font-weight: bold; font-size: 20px; }
+  #hud .ico { font-size: 16px; line-height: 1; }
+  .label { color: #8fb4ff; font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; }
+  .val { font-weight: bold; font-size: 18px; }
+  /* center mission pill: mode (tiny caps) stacked over the stage name */
+  .hud-mission { flex: 0 1 auto; min-width: 0; max-width: 38vw; }
+  .m-ico { font-size: 18px; line-height: 1; }
+  .m-col { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.15; }
+  .m-mode { font-size: 10px; font-weight: bold; letter-spacing: 1.6px; text-transform: uppercase; color: #7ee8fa;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-stage { font-size: 15px; font-weight: 800; color: #eef4ff;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #micState { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+  /* progressive slimming — chips drop off in order of importance, never wrap */
+  @media (max-width: 1150px) { #hud .chip.hud-lg { display: none; } }
+  @media (max-width: 860px)  { #hud .chip.hud-md { display: none; } }
 
   /* Overlays */
   .overlay {
@@ -229,7 +242,7 @@
   }
   #easeBtn:hover { background: rgba(30,58,120,0.85); transform: translateX(-50%) scale(1.06); }
   @media (max-width: 700px) {
-    #easeBtn { top: auto; bottom: 200px; left: 16px; transform: none; }
+    #easeBtn { top: auto; bottom: 208px; left: 12px; transform: none; }
     #easeBtn:hover { transform: scale(1.06); }
   }
 
@@ -358,12 +371,20 @@
     .overlay { justify-content: flex-start; padding: 18px 14px 28px; }
   }
   @media (max-width: 700px) {
-    #hud { padding: 8px 8px; padding-top: max(8px, env(safe-area-inset-top)); font-size: 14px; flex-wrap: wrap; }
-    #hud .chip { padding: 3px 9px; margin-right: 4px; margin-bottom: 3px; border-radius: 20px; }
-    #hud .label { font-size: 9px; }
+    /* phone HUD: one perfectly single-line bar — score | mission | bombs·lives·mic */
+    #hud { padding: 8px 10px; padding-top: max(8px, env(safe-area-inset-top)); gap: 6px; }
+    #hud .chip { height: 34px; padding: 0 10px; gap: 5px; border-radius: 17px; }
+    #hud .chip.hud-sm { display: none; }
+    #hud .label { display: none; }
+    #hud .ico { font-size: 13px; }
     #hud .val { font-size: 14px; }
-    #hud .chip.hide-sm { display: none; }
-    #pauseBtn { top: auto; bottom: 120px; left: 16px; transform: none; }
+    .hud-side { gap: 5px; }
+    .hud-mission { max-width: 34vw; padding: 0 11px; }
+    .m-ico { font-size: 15px; }
+    .m-mode { font-size: 8.5px; letter-spacing: 1px; }
+    .m-stage { font-size: 12.5px; }
+    #micState { max-width: 56px; }
+    #pauseBtn { top: auto; bottom: 150px; left: 12px; transform: none; }
     #pauseBtn:hover { transform: scale(1.08); }
     .subtitle { font-size: 14px; margin-bottom: 14px; }
     .voice-note { padding: 10px 14px 10px 12px; gap: 10px; margin: 4px 0 14px; }
@@ -381,7 +402,7 @@
     .stat { padding: 10px 16px; min-width: 96px; }
     .stat .big { font-size: 26px; }
     #breakdown { max-height: 30vh; }
-    #bombBtn { right: 12px; bottom: 108px; width: 66px; height: 66px; font-size: 26px; }
+    #bombBtn { right: 12px; bottom: 150px; width: 64px; height: 64px; font-size: 25px; }
   }
   @media (max-width: 420px) {
     #hud { font-size: 12px; }
@@ -395,19 +416,24 @@
   <canvas id="game"></canvas>
 
   <div id="hud" class="hidden">
-    <div class="left">
-      <span class="chip hide-sm"><span class="label">Pilot</span> <span class="val" id="hudName">—</span></span>
-      <span class="chip hide-sm"><span class="label">Rank</span> <span class="val" id="hudRank">—</span></span>
-      <span class="chip"><span class="label">Score</span> <span class="val gold" id="hudScore">0</span></span>
-      <span class="chip hide-sm"><span class="label">Laser</span> <span class="val" id="hudLaser" style="color:#7dd3fc">Lv 1</span></span>
-      <span class="chip" id="micChip"><span class="label">Voice</span> <span class="val" id="micState" style="color:#86efac">off</span></span>
+    <div class="hud-side hud-left">
+      <span class="chip hud-lg"><span class="label">Pilot</span><span class="val" id="hudName">—</span></span>
+      <span class="chip hud-lg"><span class="label">Rank</span><span class="val" id="hudRank">—</span></span>
+      <span class="chip"><span class="ico">⭐</span><span class="label">Score</span><span class="val gold" id="hudScore">0</span></span>
+      <span class="chip hud-sm"><span class="ico">🎯</span><span class="label">Solved</span><span class="val green" id="hudSolved">0</span></span>
+      <span class="chip hud-md"><span class="ico">⚡</span><span class="label">Laser</span><span class="val" id="hudLaser" style="color:#7dd3fc">Lv 1</span></span>
     </div>
-    <div class="right">
-      <span class="chip"><span class="label">Mode</span> <span class="val" style="color:#7ee8fa;font-size:15px" id="hudMode">Full Journey</span></span>
-      <span class="chip"><span class="label">Stage</span> <span class="val" style="color:#c4b5fd;font-size:15px" id="hudGrade">Add within 5</span></span>
-      <span class="chip"><span class="label">Solved</span> <span class="val green" id="hudSolved">0</span></span>
-      <span class="chip"><span class="label">Bombs</span> <span class="val" id="hudAmmo" style="color:#ffd36e">—</span></span>
-      <span class="chip"><span class="label">Lives</span> <span class="val" id="hudWing" style="color:#ff8ea3">❤️</span></span>
+    <div class="chip hud-mission">
+      <span class="m-ico" id="hudModeIco">🚀</span>
+      <span class="m-col">
+        <span class="m-mode" id="hudMode">Full Journey</span>
+        <span class="m-stage" id="hudGrade">Add within 5</span>
+      </span>
+    </div>
+    <div class="hud-side hud-right">
+      <span class="chip" id="micChip"><span class="ico">🎤</span><span class="val" id="micState" style="color:#86efac">off</span></span>
+      <span class="chip"><span class="ico">💣</span><span class="val" id="hudAmmo" style="color:#ffd36e">—</span></span>
+      <span class="chip"><span class="ico">❤️</span><span class="val" id="hudWing" style="color:#ff8ea3">×1</span></span>
     </div>
   </div>
 
@@ -500,7 +526,11 @@
   let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
 
   function resize() {
-    W = window.innerWidth; H = window.innerHeight;
+    // visualViewport is the HONEST visible area on iOS (innerHeight can include space hidden
+    // under Safari's bottom toolbar, which was clipping the bottom of the UI).
+    const vv = window.visualViewport;
+    W = Math.round(vv ? vv.width : window.innerWidth);
+    H = Math.round(vv ? vv.height : window.innerHeight);
     canvas.width = W * DPR; canvas.height = H * DPR;
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -998,7 +1028,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     invuln: 0, // frames of invulnerability after hit
   };
   function resetShip() {
-    ship.x = W/2; ship.y = H - 110; ship.vx = 0; ship.vy = 0; ship.invuln = 0;
+    ship.x = W/2; ship.y = H - 200; ship.vx = 0; ship.vy = 0; ship.invuln = 0;
     ship.angle = -Math.PI/2;   // always faces up in the vertical shooter
     ship.destroyed = false;
   }
@@ -1891,8 +1921,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     if (!el) return;
     if (!Speech.supported){ el.textContent = 'n/a'; el.style.color = '#fda4af'; return; }
     if (!Speech.enabled){ el.textContent = 'off'; el.style.color = '#fda4af'; return; }
-    if (Speech.lastHeard){ el.textContent = '🎤 ' + Speech.lastHeard; el.style.color = '#7dd3fc'; }
-    else { el.textContent = '🎤 listening'; el.style.color = '#86efac'; }
+    if (Speech.lastHeard){ el.textContent = Speech.lastHeard; el.style.color = '#7dd3fc'; }
+    else { el.textContent = 'on'; el.style.color = '#86efac'; }
   }
 
   // ===== ANSWER-AWARE matching =========================================================
@@ -2494,8 +2524,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const bh = 64;
     const totalW = bw*n + gap*(n-1);
     let startX = (W - totalW)/2;
-    // on touch screens sit a little higher, clear of the iOS home-indicator swipe zone
-    const y = H - bh - (touchMode ? 40 : 22);
+    // sit comfortably above the bottom edge / iOS home-indicator swipe zone
+    const y = H - bh - (touchMode ? 46 : 24);
     for (let i=0;i<n;i++){
       p.options[i].x = startX + i*(bw+gap);
       p.options[i].y = y;
@@ -2794,13 +2824,15 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const wl = weaponLevel();
     hud.laser.textContent = 'L' + wl + ' ' + weaponName(wl);
     hud.laser.style.color = wl>=24 ? '#ff8e3c' : wl>=16 ? '#ffd36e' : wl>=8 ? '#7ef9ff' : wl>=4 ? '#c4b5fd' : '#7dd3fc';
-    if (hud.mode) hud.mode.textContent = MODE.icon + ' ' + MODE.name;
+    if (hud.mode) hud.mode.textContent = MODE.name;
+    { const mi = document.getElementById('hudModeIco'); if (mi) mi.textContent = MODE.icon; }
     hud.grade.textContent = stageName(game.level);
     hud.solved.textContent = game.solvedCount;
-    hud.ammo.textContent = wingBombs>0 ? ('💣×' + wingBombs) : 'none';
+    hud.ammo.textContent = '×' + wingBombs;
+    hud.ammo.style.color = wingBombs > 0 ? '#ffd36e' : '#5a6488';
     // Extra lives: 1 base ship ❤️ plus one per earned wingman.
     const totalLives = wingmen + 1;
-    hud.wing.textContent = totalLives<=6 ? '❤️'.repeat(totalLives) : ('❤️×' + totalLives);
+    hud.wing.textContent = '×' + totalLives;
     // keep the on-screen touch bomb button in sync
     const bc = document.getElementById('bombCnt');
     if (bc){ bc.textContent = wingBombs; }
@@ -2856,7 +2888,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     fingerDX = 0; fingerDY = 0;
     // keep on-screen, but the ship may now fly as far forward (up) as it wants
     ship.x = Math.max(ship.r, Math.min(W - ship.r, ship.x));
-    ship.y = Math.max(ship.r, Math.min(H - ship.r, ship.y));
+    // the flight zone stops ABOVE the answer-button row — ship and buttons never overlap
+    ship.y = Math.max(ship.r, Math.min(H - (touchMode ? 176 : 156), ship.y));
     if (ship.invuln > 0) ship.invuln--;
 
     // engine exhaust — a soft ribbon of glowing embers streaming behind the ship
@@ -2931,7 +2964,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       // last ~100px so kids get a real moment to answer before it reaches the bottom.
       layoutOptions(problem);
       let vy = problem.vy;
-      const missLine = H - 130;
+      const missLine = H - 160;      // just above the ship's flight floor
       const slowStart = missLine - 100;
       if (problem.y > slowStart){
         const f = Math.min(1, (problem.y - slowStart) / (missLine - slowStart));
@@ -2940,7 +2973,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       problem.y += vy;
       if (problem.shieldHit > 0) problem.shieldHit--;
       // if it reaches the bottom, the problem TURNS INTO AN ENEMY SHIP (no ammo reset).
-      if (problem.y > H - 130) {
+      if (problem.y > H - 160) {
         // missed problem
         recordAnswer({
           text: problem.text, correctAnswer: problem.answer,

@@ -43,6 +43,9 @@
     position: absolute; top: 0; left: 0; right: 0;
     display: flex; justify-content: space-between; align-items: center;
     padding: 14px 22px;
+    padding-top: max(14px, env(safe-area-inset-top));
+    padding-left: max(22px, env(safe-area-inset-left));
+    padding-right: max(22px, env(safe-area-inset-right));
     pointer-events: none;
     font-size: 18px;
     text-shadow: 0 0 8px rgba(80,140,255,0.7);
@@ -349,11 +352,13 @@
      scroll instead of overflowing.
      ============================================================ */
   .overlay { overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  @media (max-height: 760px), (max-width: 700px) {
+  @media (max-height: 940px), (max-width: 700px) {
+    /* start-screen content is tall — top-align + scroll so nothing gets clipped
+       (flex center + overflow clips the top unreachably) */
     .overlay { justify-content: flex-start; padding: 18px 14px 28px; }
   }
   @media (max-width: 700px) {
-    #hud { padding: 8px 8px; font-size: 14px; flex-wrap: wrap; }
+    #hud { padding: 8px 8px; padding-top: max(8px, env(safe-area-inset-top)); font-size: 14px; flex-wrap: wrap; }
     #hud .chip { padding: 3px 9px; margin-right: 4px; margin-bottom: 3px; border-radius: 20px; }
     #hud .label { font-size: 9px; }
     #hud .val { font-size: 14px; }
@@ -394,7 +399,7 @@
       <span class="chip hide-sm"><span class="label">Pilot</span> <span class="val" id="hudName">—</span></span>
       <span class="chip hide-sm"><span class="label">Rank</span> <span class="val" id="hudRank">—</span></span>
       <span class="chip"><span class="label">Score</span> <span class="val gold" id="hudScore">0</span></span>
-      <span class="chip"><span class="label">Laser</span> <span class="val" id="hudLaser" style="color:#7dd3fc">Lv 1</span></span>
+      <span class="chip hide-sm"><span class="label">Laser</span> <span class="val" id="hudLaser" style="color:#7dd3fc">Lv 1</span></span>
       <span class="chip" id="micChip"><span class="label">Voice</span> <span class="val" id="micState" style="color:#86efac">off</span></span>
     </div>
     <div class="right">
@@ -1401,7 +1406,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   const keys = {};
   // You answer by VOICE. SPACE / B drop a wingman MEGA-BOMB (one per press).
   window.addEventListener('keydown', e => {
-    if (["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," "].includes(e.key)) e.preventDefault();
+    // only hijack movement keys DURING play — never block typing (e.g. spaces in the name input)
+    if (state === State.PLAY && ["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," "].includes(e.key)) e.preventDefault();
     const wasDown = keys[e.key];
     keys[e.key] = true;
     if (state === State.PLAY){
@@ -1543,7 +1549,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     e.preventDefault();                            // stop scrolling/zoom + synthetic mouse events
     Sfx.resume();
     if (paused){ setPause(false); return; }        // tap anywhere to resume
-    if (touchId === null && e.changedTouches.length){
+    if ((touchId === null || e.touches.length === 1) && e.changedTouches.length){
+      // first finger — or our remembered steering finger went stale (missed touchend): recover
       const t = e.changedTouches[0];
       touchId = t.identifier;
       const p = touchXY(t);
@@ -2487,7 +2494,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const bh = 64;
     const totalW = bw*n + gap*(n-1);
     let startX = (W - totalW)/2;
-    const y = H - bh - 22;
+    // on touch screens sit a little higher, clear of the iOS home-indicator swipe zone
+    const y = H - bh - (touchMode ? 40 : 22);
     for (let i=0;i<n;i++){
       p.options[i].x = startX + i*(bw+gap);
       p.options[i].y = y;
@@ -2496,11 +2504,26 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     }
   }
 
+  // ---- Answer-event pipeline ------------------------------------------------------------
+  // EVERY attempted or missed problem flows through here into game.log (which powers the
+  // results screen, the diagnostic placement, and the downloadable report). A host page —
+  // e.g. the future math-hub this game will live inside — can define
+  //   window.onMathAnswer = (evt) => { ... }
+  // to receive each event in real time: {text, correctAnswer, chosen, correct, missed,
+  // skill, stage, stageIndex, level, mode, time}.
+  function recordAnswer(entry){
+    game.log.push(entry);
+    try {
+      if (typeof window.onMathAnswer === 'function')
+        window.onMathAnswer(Object.assign({ mode: MODE.key, pilot: playerName }, entry));
+    } catch(_){}
+  }
+
   function chooseAnswer(opt) {
     // ignore clicks once answered, or repeated presses of an already-wrong option
     if (!problem || problem.answered || problem.dead || opt.wrong) return;
     const correct = (opt.value === problem.answer);
-    game.log.push({
+    recordAnswer({
       text: problem.text,
       correctAnswer: problem.answer,
       chosen: opt.value,
@@ -2919,7 +2942,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       // if it reaches the bottom, the problem TURNS INTO AN ENEMY SHIP (no ammo reset).
       if (problem.y > H - 130) {
         // missed problem
-        game.log.push({
+        recordAnswer({
           text: problem.text, correctAnswer: problem.answer,
           chosen: null, correct: false, level: game.level, missed:true,
           skill: problem.skill, stage: problem.stageName, stageIndex: problem.stageIndex,
@@ -3586,6 +3609,13 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       ctx.shadowBlur = 0;
       ctx.fillStyle = '#9fb6dd'; ctx.font = '22px Trebuchet MS';
       ctx.fillText(touchMode ? 'Tap the screen to resume' : 'Press  SHIFT  ·  or click the screen  — to resume', W/2, H/2 + 40);
+      // quick control cheatsheet so every input path is discoverable
+      ctx.font = '16px Trebuchet MS'; ctx.fillStyle = '#7e90c0';
+      const tips = touchMode
+        ? ['Fly: drag anywhere  ·  Answer: say it or tap a button', 'Bomb: 💣 button  ·  Easier math: 💙 button']
+        : ['Fly: slide the mouse  ·  Answer: say it, type it, or click a button', 'Bomb: SPACE / B  ·  Easier math: E  ·  Mute: M'];
+      ctx.fillText(tips[0], W/2, H/2 + 84);
+      ctx.fillText(tips[1], W/2, H/2 + 110);
       ctx.restore();
     }
 

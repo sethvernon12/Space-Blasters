@@ -421,7 +421,15 @@
     .m-ico { font-size: 15px; }
     .m-mode { font-size: 8.5px; letter-spacing: 1px; }
     .m-stage { font-size: 12.5px; }
-    #micState { max-width: 56px; }
+    /* voice indicator floats just under the bar — keeps the bar itself one guaranteed line */
+    #micChip {
+      position: fixed; right: 10px;
+      top: calc(max(8px, env(safe-area-inset-top)) + 44px);
+      height: 26px; padding: 0 9px; gap: 4px; border-radius: 13px;
+    }
+    #micChip .ico { font-size: 11px; }
+    #micChip .val { font-size: 11px; }
+    #micState { max-width: 92px; }
     #pauseBtn { top: auto; bottom: 150px; left: 12px; transform: none; }
     #pauseBtn:hover { transform: scale(1.08); }
     .subtitle { font-size: 14px; margin-bottom: 14px; }
@@ -445,6 +453,8 @@
     th, td { padding: 7px 8px; }
     .btn-row.result-actions { flex-direction: column; width: 100%; max-width: 340px; }
     .btn-row.result-actions .btn { width: 100%; }
+    .skillrow { font-size: 12px; gap: 7px; }
+    .skillrow > span:first-child { min-width: 104px; }
     #bombBtn { right: 12px; bottom: 150px; width: 64px; height: 64px; font-size: 25px; }
   }
   @media (max-width: 420px) {
@@ -1073,7 +1083,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     invuln: 0, // frames of invulnerability after hit
   };
   function resetShip() {
-    ship.x = W/2; ship.y = H - 200; ship.vx = 0; ship.vy = 0; ship.invuln = 0;
+    ship.x = W/2; ship.y = uiBottom().y - 96; ship.vx = 0; ship.vy = 0; ship.invuln = 0;
     ship.angle = -Math.PI/2;   // always faces up in the vertical shooter
     ship.destroyed = false;
   }
@@ -2561,16 +2571,22 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     };
   }
 
+  // Geometry of the bottom UI band (the answer-button row) — adapts to short screens
+  // (phone landscape) and leaves clearance for the iOS home indicator on touch.
+  function uiBottom(){
+    const bh = H < 500 ? 52 : 64;
+    const y = H - bh - (H < 500 ? 18 : (touchMode ? 46 : 24));
+    return { bh, y };
+  }
+
   // Layout the 3 answer buttons along the bottom
   function layoutOptions(p) {
     const n = p.options.length;
     const gap = 18;
     const bw = Math.min(220, (W - gap*(n+1)) / n);
-    const bh = 64;
+    const { bh, y } = uiBottom();
     const totalW = bw*n + gap*(n-1);
     let startX = (W - totalW)/2;
-    // sit comfortably above the bottom edge / iOS home-indicator swipe zone
-    const y = H - bh - (touchMode ? 46 : 24);
     for (let i=0;i<n;i++){
       p.options[i].x = startX + i*(bw+gap);
       p.options[i].y = y;
@@ -2941,7 +2957,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     // keep on-screen, but the ship may now fly as far forward (up) as it wants
     ship.x = Math.max(ship.r, Math.min(W - ship.r, ship.x));
     // the flight zone stops ABOVE the answer-button row — ship and buttons never overlap
-    ship.y = Math.max(ship.r, Math.min(H - (touchMode ? 176 : 156), ship.y));
+    ship.y = Math.max(ship.r, Math.min(uiBottom().y - 46, ship.y));
     if (ship.invuln > 0) ship.invuln--;
 
     // engine exhaust — a soft ribbon of glowing embers streaming behind the ship
@@ -3016,7 +3032,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       // last ~100px so kids get a real moment to answer before it reaches the bottom.
       layoutOptions(problem);
       let vy = problem.vy;
-      const missLine = H - 160;      // just above the ship's flight floor
+      const missLine = uiBottom().y - 56;      // just above the ship's flight floor
       const slowStart = missLine - 100;
       if (problem.y > slowStart){
         const f = Math.min(1, (problem.y - slowStart) / (missLine - slowStart));
@@ -3025,7 +3041,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       problem.y += vy;
       if (problem.shieldHit > 0) problem.shieldHit--;
       // if it reaches the bottom, the problem TURNS INTO AN ENEMY SHIP (no ammo reset).
-      if (problem.y > H - 160) {
+      if (problem.y > uiBottom().y - 56) {
         // missed problem
         recordAnswer({
           text: problem.text, correctAnswer: problem.answer,

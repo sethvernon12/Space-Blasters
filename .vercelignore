@@ -1,0 +1,12 @@
+db/
+docs/
+legal/
+supabase/
+taxonomy/
+observability/
+tools/
+screens/
+.github/
+*.md
+.env.example
+.gitignore

@@ -10,3 +10,4 @@ screens/
 *.md
 .env.example
 .gitignore
+contracts/

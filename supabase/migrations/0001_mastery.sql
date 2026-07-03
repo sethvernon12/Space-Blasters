@@ -127,7 +127,9 @@ alter table public.children
   add constraint children_consent_fk foreign key (consent_id) references public.consent_ledger(id);
 
 create or replace function public.forbid_mutation() returns trigger
-language plpgsql as $$
+language plpgsql
+set search_path = ''
+as $$
 begin
   raise exception '% rows are append-only/immutable', tg_table_name;
 end $$;
@@ -321,7 +323,9 @@ alter table public.rpc_rate_limits           force row level security;
 -- SECURITY INVOKER on purpose: it runs under the caller's RLS, and the
 -- children policies below use only direct column checks (no recursion).
 create or replace function public.is_my_child(c uuid) returns boolean
-language sql stable security invoker as $$
+language sql stable security invoker
+set search_path = ''
+as $$
   select exists (
     select 1 from public.children ch
     where ch.id = c
@@ -334,7 +338,9 @@ $$;
 -- No recursion: children policies reference tutor_grants directly, and
 -- tutor_grants policies reference no other table.
 create or replace function public.can_view_child(c uuid) returns boolean
-language sql stable security invoker as $$
+language sql stable security invoker
+set search_path = ''
+as $$
   select public.is_my_child(c)
       or exists (
         select 1 from public.tutor_grants tg

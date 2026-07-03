@@ -16,8 +16,11 @@ blockers for starting Phase 2/3 work.
    phase. The legacy-players → child keying assumption is stated in the file header.
 2. **Deny-by-default isolation, tested.** RLS enabled + FORCED on every new table,
    keyed only to `auth.uid()`; zero grants to `anon`; mastery/misconception writable by
-   no client; attempts append-only and consent ledger immutable even for
-   `service_role`. Proven by `npm test` (10 leak tests) + `npm run validate` — all
+   no client; child profiles + consent rows are service-only writes (clients cannot
+   forge consent or skip it — attempts are RLS-blocked for consent-less children);
+   client updates on children limited to cosmetic columns (no identity/claim
+   rewriting); attempts append-only and consent ledger immutable even for
+   `service_role`. Proven by `npm test` (13 leak tests) + `npm run validate` — all
    green locally and in CI on this branch.
 3. **Taxonomy anchored to the real game.** `taxonomy/skills.json` covers all 23 stage
    keys in ladder order and all 13 emitted skill tags, with CCSS codes for every skill

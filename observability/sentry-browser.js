@@ -31,5 +31,18 @@ export function scrubEvent(event) {
     }
   };
   walk(event.extra); walk(event.contexts); walk(event.tags); walk(event.breadcrumbs);
+  // free-text fields too: an error string can interpolate a nickname/email/token
+  if (event.message) event.message = scrubString(event.message);
+  for (const ex of event.exception?.values ?? []) {
+    if (ex.value) ex.value = scrubString(ex.value);
+  }
   return event;
+}
+
+// Redact email-like, JWT-like and long-token-like substrings inside a string.
+export function scrubString(s) {
+  return String(s)
+    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email]')
+    .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]+/g, '[jwt]')
+    .replace(/\b[a-f0-9]{32,}\b/gi, '[token]');
 }

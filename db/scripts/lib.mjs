@@ -13,17 +13,27 @@ export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '
 // never through these scripts.
 // ---------------------------------------------------------------------------
 const BANNED = ['supabase.co', 'supabase.com', 'supabase.in', 'pooler.supabase', 'oafovcrxdjoyaxsytyjg'];
+// ALLOWLIST, not just a blocklist: only unambiguously-local hosts are accepted, so
+// IP-literals of remote hosts, percent-encoded hostnames, or env-var fallbacks
+// (PGHOST) can't slip a real database past the guard.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0', 'host.docker.internal', 'postgres']);
 export function assertNotProd(url) {
+  const refuse = (why) => {
+    console.error(
+      `\nREFUSING to connect (${why}): "${url}"\n` +
+      `This tooling only ever targets local/ephemeral Postgres (allowed hosts: ` +
+      `${[...LOCAL_HOSTS].join(', ')}). Applying schema to any real database requires\n` +
+      `explicit human approval (see CLAUDE.md, NON-NEGOTIABLE #1).\n`
+    );
+    process.exit(1);
+  };
   const u = String(url).toLowerCase();
-  for (const b of BANNED) {
-    if (u.includes(b)) {
-      console.error(
-        `\nREFUSING to connect: "${url}" looks like a real Supabase database.\n` +
-        `This tooling only ever targets local/ephemeral Postgres. Applying schema to a\n` +
-        `real database requires explicit human approval (see CLAUDE.md, NON-NEGOTIABLE #1).\n`
-      );
-      process.exit(1);
-    }
+  for (const b of BANNED) if (u.includes(b)) refuse('matches a production/Supabase pattern');
+  let host = '';
+  try { host = new URL(u).hostname; } catch { refuse('unparseable URL'); }
+  if (!host || !LOCAL_HOSTS.has(host)) refuse(`host "${host || '(empty)'}" is not a known local host`);
+  if (process.env.PGHOST && !LOCAL_HOSTS.has(String(process.env.PGHOST).toLowerCase())) {
+    refuse(`PGHOST env var ("${process.env.PGHOST}") is not a known local host`);
   }
 }
 

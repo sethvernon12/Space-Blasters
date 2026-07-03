@@ -56,11 +56,46 @@ async function rejects(c, sql, params, re, label) {
 test('parent sees exactly their own children — and no one else’s', async () => {
   await as('authenticated', FIX.parentA, async (c) => {
     const rows = (await c.query('select id from public.children order by nickname')).rows.map(r => r.id);
-    assert.deepEqual(rows.sort(), [FIX.childA1, FIX.childA2].sort());
+    assert.deepEqual(rows.sort(), [FIX.childA1, FIX.childA2, FIX.childA3].sort());
   });
   await as('authenticated', FIX.parentB, async (c) => {
     const rows = (await c.query('select id from public.children')).rows.map(r => r.id);
     assert.deepEqual(rows, [FIX.childB1]);
+  });
+});
+
+test('child profiles and consent rows are SERVICE-ONLY writes (no client forgery)', async () => {
+  await as('authenticated', FIX.parentA, async (c) => {
+    // a client can never create a child profile (consent flow does it server-side)
+    await rejects(c, `insert into public.children (parent_id, nickname) values ($1, 'Forged')`,
+      [FIX.parentA], /permission denied/i, 'client insert children');
+    // ...and can never write its own "verifiable parental consent" record
+    await rejects(c, `insert into public.consent_ledger (parent_id, child_id, action, method, policy_version)
+         values ($1, $2, 'grant', 'stripe_card_transaction', 'forged')`,
+      [FIX.parentA, FIX.childA1], /permission denied/i, 'client insert consent');
+  });
+});
+
+test('client updates on children are limited to cosmetic columns', async () => {
+  await as('authenticated', FIX.parentA, async (c) => {
+    const upd = await c.query(`update public.children set nickname = 'Nova2' where id = $1`, [FIX.childA1]);
+    assert.equal(upd.rowCount, 1, 'nickname update allowed for own child');
+    await rejects(c, `update public.children set auth_user_id = $1 where id = $2`,
+      [FIX.parentA, FIX.childA1], /permission denied/i, 'auth_user_id locked');
+    await rejects(c, `update public.children set legacy_player_id = null where id = $1`,
+      [FIX.childA1], /permission denied/i, 'legacy claim column locked');
+    await rejects(c, `update public.children set consent_id = null where id = $1`,
+      [FIX.childA1], /permission denied/i, 'consent link locked');
+    await rejects(c, `update public.children set parent_id = $1 where id = $2`,
+      [FIX.parentB, FIX.childA1], /permission denied/i, 're-parenting locked');
+  });
+});
+
+test('no consent, no data: attempts for a consent-less child are rejected', async () => {
+  await as('authenticated', FIX.parentA, async (c) => {
+    await rejects(c, `insert into public.attempts (child_id, skill_id, client_attempt_id, result)
+         values ($1, 'add5', gen_random_uuid(), 'correct')`,
+      [FIX.childA3], /row-level security/i, 'childA3 has no consent_ledger link');
   });
 });
 
@@ -138,7 +173,7 @@ test('unclaimed legacy children (Phase-3 placeholder) are invisible to every cli
 test('service_role bypasses RLS (sanity — this is WHY Edge Functions must re-filter by child_id)', async () => {
   await as('service_role', null, async (c) => {
     const n = (await c.query('select count(*)::int as n from public.children')).rows[0].n;
-    assert.equal(n, 4); // sees all children incl. the unclaimed legacy one
+    assert.equal(n, 5); // sees all children incl. the unclaimed legacy one
   });
 });
 

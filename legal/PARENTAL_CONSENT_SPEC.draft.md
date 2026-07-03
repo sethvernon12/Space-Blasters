@@ -14,8 +14,11 @@ subscription (or a $[TODO 0.50–1.00] verification charge for a free-tier paren
 
 ## 2. Non-negotiable invariants (mirror CLAUDE.md hard rules)
 1. **No child profile exists and no child data is stored until a consent GRANT row is
-   recorded.** The database enforces the audit trail: `consent_ledger` is append-only
-   and immutable (trigger-enforced, even against service credentials).
+   recorded — and the database itself enforces this.** Child profiles and consent rows
+   are SERVICE-ONLY writes (no client policy/grant), so a client can never forge a
+   consent record or create a profile that skips consent; attempt logging is
+   RLS-blocked unless the child carries an active consent link; and `consent_ledger`
+   is append-only and immutable (trigger-enforced, even against service credentials).
 2. Each ledger row records: `parent_id` (verified login), `child_id`, `action`
    (`grant` | `revoke`), `method` (`stripe_card_transaction` | `legacy_claim` |
    `other_vpc`), `policy_version`, `detail` (e.g., Stripe payment-intent id — never

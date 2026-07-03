@@ -8,6 +8,7 @@ export const FIX = {
   parentB: '22222222-2222-4222-8222-222222222222',
   childA1: 'aaaaaaa1-0000-4000-8000-0000000000a1',
   childA2: 'aaaaaaa2-0000-4000-8000-0000000000a2',
+  childA3: 'aaaaaaa3-0000-4000-8000-0000000000a3', // NO consent row: data collection must be blocked
   childB1: 'bbbbbbb1-0000-4000-8000-0000000000b1',
   childA1Login: 'ccccccc1-0000-4000-8000-0000000000c1', // the child's own auth user
   legacyChild: 'dddddddd-0000-4000-8000-0000000000d1', // unclaimed legacy import
@@ -26,9 +27,10 @@ export async function seedFixtures(client) {
     `insert into public.children (id, parent_id, auth_user_id, legacy_player_id, nickname, grade_band) values
      ($1, $2, $3, null, 'Nova', '1'),
      ($4, $2, null, null, 'Milo', 'K'),
-     ($5, $6, null, null, 'Rex',  '3'),
-     ($7, null, null, $8, 'LegacyKid', null)`,
-    [FIX.childA1, FIX.parentA, FIX.childA1Login, FIX.childA2, FIX.childB1, FIX.parentB, FIX.legacyChild, player.rows[0].id]
+     ($5, $2, null, null, 'Pip',  '2'),
+     ($6, $7, null, null, 'Rex',  '3'),
+     ($8, null, null, $9, 'LegacyKid', null)`,
+    [FIX.childA1, FIX.parentA, FIX.childA1Login, FIX.childA2, FIX.childA3, FIX.childB1, FIX.parentB, FIX.legacyChild, player.rows[0].id]
   );
 
   // consent ledger (grant rows) + link back to children

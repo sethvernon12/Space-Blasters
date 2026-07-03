@@ -260,14 +260,17 @@ $$;
 create policy skills_read on public.skills
   for select to authenticated using (true);
 
--- children: a parent sees/edits own children; a child login sees itself.
+-- children: a parent sees own children; a child login sees itself. Creation is
+-- SERVICE-ONLY (no insert policy/grant): per the VPC spec, a child row is born
+-- inside the consent Edge Function AFTER the Stripe transaction verifies — so a
+-- client can never create a profile that skips consent. Client updates are
+-- limited by COLUMN-LEVEL GRANTS below to nickname/grade_band; the identity &
+-- claim columns (parent_id, auth_user_id, legacy_player_id, consent_id) are
+-- mutable only via the audited service path (blocks legacy-claim bypass).
 -- Unclaimed legacy rows (both ids NULL) match no policy => invisible.
 create policy children_select on public.children
   for select to authenticated
   using (parent_id = auth.uid() or auth_user_id = auth.uid());
-create policy children_insert on public.children
-  for insert to authenticated
-  with check (parent_id = auth.uid());
 create policy children_update on public.children
   for update to authenticated
   using (parent_id = auth.uid())
@@ -275,19 +278,26 @@ create policy children_update on public.children
 -- NO delete policy: deletion is the audited service-path pipeline only
 -- (hard-delete across DB/Storage/CDN with a deletion receipt — HARD RULE #6).
 
--- consent_ledger: parents read & append their own; nothing else, ever.
+-- consent_ledger: parents can READ their own rows. Writes are SERVICE-ONLY
+-- (no insert policy/grant): a consent GRANT row is legal evidence and must be
+-- written by the Edge Function only after it verifies the Stripe transaction
+-- server-side — a client-writable ledger would be forgeable self-attestation.
 create policy consent_select on public.consent_ledger
   for select to authenticated using (parent_id = auth.uid());
-create policy consent_insert on public.consent_ledger
-  for insert to authenticated
-  with check (parent_id = auth.uid() and public.is_my_child(child_id));
 
 -- attempts: owner reads; owner (parent or the child itself) appends for that
--- child ONLY; append-only (no update/delete policy + trigger above).
+-- child ONLY, and ONLY while the child has an active consent link (HARD RULE
+-- #1: no data collection before VPC; children.consent_id is maintained by the
+-- service path and nulled on revocation). Append-only (trigger above).
 create policy attempts_select on public.attempts
   for select to authenticated using (public.is_my_child(child_id));
 create policy attempts_insert on public.attempts
-  for insert to authenticated with check (public.is_my_child(child_id));
+  for insert to authenticated
+  with check (
+    public.is_my_child(child_id)
+    and exists (select 1 from public.children ch
+                 where ch.id = child_id and ch.consent_id is not null)
+  );
 
 -- mastery + misconception state: owner READS; clients can NEVER write — the
 -- server-side model worker (service role, which bypasses RLS but MUST
@@ -309,12 +319,15 @@ revoke all on public.attempts                  from public, anon;
 revoke all on public.child_skill_mastery       from public, anon;
 revoke all on public.child_skill_misconception from public, anon;
 
-grant select                 on public.skills                    to authenticated;
-grant select, insert, update on public.children                  to authenticated;
-grant select, insert         on public.consent_ledger            to authenticated;
-grant select, insert         on public.attempts                  to authenticated;
-grant select                 on public.child_skill_mastery       to authenticated;
-grant select                 on public.child_skill_misconception to authenticated;
+grant select on public.skills to authenticated;
+-- children: clients may update ONLY the cosmetic columns (column-level grant);
+-- identity/claim columns and row creation are service-path only.
+grant select on public.children to authenticated;
+grant update (nickname, grade_band, updated_at) on public.children to authenticated;
+grant select on public.consent_ledger to authenticated;   -- read-only: writes are service-only
+grant select, insert on public.attempts to authenticated;
+grant select on public.child_skill_mastery       to authenticated;
+grant select on public.child_skill_misconception to authenticated;
 
 -- service_role: full table ACLs (matches Supabase default privileges — BYPASSRLS
 -- covers row policies, not table grants). The append-only/immutable triggers

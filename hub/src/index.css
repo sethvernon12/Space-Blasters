@@ -1,0 +1,118 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* ============================================================================
+   Smarter Games Hub — design tokens.
+   The palette IS the game's palette (root index.html), so hub + game read as
+   one world: deep-navy space, warm orange/gold actions, cyan information.
+   Type: the game's rounded system stack — no webfonts (fast, offline-kind).
+   ========================================================================= */
+
+@theme inline {
+  --font-sans: ui-rounded, "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  /* game-world extras */
+  --color-gold: #ffd36e;
+  --color-gold-hover: #ffae3c;
+  --color-cyan: #7ee8fa;
+  --color-cyan-deep: #67e8f9;
+  --color-mint: #86efac;
+  --color-rose: #fda4af;
+  --color-blaster: #ff5252;
+  --color-hud: #9fb6e8;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+:root {
+  --radius: 1rem;
+  --background: #05040f;
+  --foreground: #dfe9ff;
+  --card: rgba(20, 28, 60, 0.92);
+  --card-foreground: #dfe9ff;
+  --popover: #0d1434;
+  --popover-foreground: #dfe9ff;
+  --primary: #ff8e3c;                 /* warm orange — the game's action color */
+  --primary-foreground: #2a1204;      /* AA on orange */
+  --secondary: #7ee8fa;               /* cyan — info */
+  --secondary-foreground: #04262e;
+  --muted: rgba(159, 182, 232, 0.12);
+  --muted-foreground: #9fb6e8;
+  --accent: #ffd36e;                  /* gold */
+  --accent-foreground: #2a1d04;
+  --destructive: #ff5252;
+  --destructive-foreground: #2a0404;
+  --border: rgba(126, 232, 250, 0.22);
+  --input: rgba(159, 182, 232, 0.3);
+  --ring: #67e8f9;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/60; }
+  html { color-scheme: dark; }
+  body {
+    @apply text-foreground font-sans antialiased;
+    /* the game's sky: deep-navy radial #141238 → #08061c → #03020a */
+    background:
+      radial-gradient(ellipse at 50% 18%, #141238 0%, #08061c 55%, #03020a 100%)
+      fixed #05040f;
+    min-height: 100dvh;
+  }
+  :focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; border-radius: 6px; }
+}
+
+/* ---- twinkling star field (ambient; fully disabled for reduced motion) ---- */
+.starfield {
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 22%, rgba(223,233,255,.9) 50%, transparent 51%),
+    radial-gradient(1px 1px at 32% 68%, rgba(126,232,250,.8) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 51% 12%, rgba(223,233,255,.7) 50%, transparent 51%),
+    radial-gradient(1px 1px at 66% 46%, rgba(255,211,110,.7) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 78% 76%, rgba(223,233,255,.8) 50%, transparent 51%),
+    radial-gradient(1px 1px at 88% 28%, rgba(126,232,250,.7) 50%, transparent 51%),
+    radial-gradient(1px 1px at 22% 88%, rgba(223,233,255,.6) 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 94% 60%, rgba(255,216,240,.6) 50%, transparent 51%);
+  animation: twinkle 5.5s ease-in-out infinite alternate;
+}
+@keyframes twinkle { from { opacity: .55; } to { opacity: 1; } }
+
+/* the game's gradient title treatment (SPACE BLASTERS wordmark language) */
+.wordmark {
+  background: linear-gradient(90deg, #67e8f9 0%, #a78bfa 45%, #f0abfc 75%, #ffd36e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .starfield { animation: none; opacity: .8; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

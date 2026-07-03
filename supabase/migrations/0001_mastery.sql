@@ -292,6 +292,7 @@ create table public.rpc_rate_limits (
   bad_pin_count int not null default 0 check (bad_pin_count >= 0),
   locked_until  timestamptz
 );
+create index rpc_rate_limits_age_idx on public.rpc_rate_limits (window_start);
 
 -- ============================================================================
 -- ROW LEVEL SECURITY — deny-by-default, keyed to auth.uid() ONLY
@@ -487,7 +488,7 @@ grant all on public.skills, public.children, public.consent_ledger, public.sessi
 create or replace function public.verify_pin(p_pin text, p_hash text)
 returns boolean language sql immutable
 set search_path = public, extensions, pg_temp   -- pgcrypto lives in `extensions` on Supabase
-as $$ select p_hash is not null and crypt(p_pin, p_hash) = p_hash $$;
+as $$ select p_hash is not null and extensions.crypt(p_pin, p_hash) = p_hash $$;
 
 create or replace function public.record_attempts(p_name text, p_pin text, p_batch jsonb)
 returns json
@@ -531,6 +532,11 @@ begin
   end if;
 
   -- ---- rate limiting (locked row per name; serializes concurrent calls) ----
+  -- opportunistic TTL cleanup so junk names can't grow this table unboundedly
+  -- (indexed on window_start; stale locks are long expired after 7 days)
+  delete from public.rpc_rate_limits
+   where window_start < v_now - interval '7 days'
+     and (locked_until is null or locked_until < v_now);
   insert into public.rpc_rate_limits as rl (key) values (v_key)
     on conflict (key) do update set key = rl.key   -- no-op; just get the lock target
     returning * into v_rl;

@@ -23,8 +23,8 @@ export const FIX = {
 
 export async function seedFixtures(client) {
   // legacy production-style players rows (mirror table locally); pin_hash uses
-  // the same crypt() scheme verify_pin assumes (TO CONFIRM against prod before
-  // any hosted apply — see the migration header note)
+  // bcrypt via pgcrypto crypt() — CONFIRMED to match production signup_or_login
+  // (owner, 2026-07-03)
   const player = await client.query(
     `insert into public.players (name, pin_hash, best_score, best_stage, games_played, total_correct)
      values ('LegacyKid', extensions.crypt($1, extensions.gen_salt('bf')), 385, 'Add within 10', 12, 140)

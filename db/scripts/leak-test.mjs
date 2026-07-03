@@ -225,6 +225,15 @@ test('RPC happy path: atomic insert + mastery + session; replay is a no-op (idem
 
 test('RPC auth: wrong PIN -> generic denied, 5 strikes -> locked even for the right PIN', async () => {
   await as('anon', null, async (c) => {
+    // malformed PINs are bad_request (client bug), not an auth strike
+    for (const badFormat of ['abcd', '12345', '12 4', '']) {
+      const r = await callRpc(c, 'NovaPilot', badFormat, { ...SESSION(), attempts: [] });
+      assert.deepEqual({ ok: r.ok, error: r.error }, { ok: false, error: 'bad_request' });
+    }
+    // name matching is case-insensitive + trimmed (mirrors signup_or_login):
+    // a valid child must never be rejected on a name-case/whitespace mismatch
+    const okName = await callRpc(c, '  novapilot ', FIX.pinNova, { ...SESSION(), attempts: [] });
+    assert.equal(okName.ok, true, 'trimmed, case-insensitive name resolves');
     for (let i = 0; i < 5; i++) {
       const r = await callRpc(c, 'NovaPilot', '0000', { ...SESSION(), attempts: [] });
       assert.deepEqual({ ok: r.ok, error: r.error }, { ok: false, error: 'denied' }, 'no PIN oracle');

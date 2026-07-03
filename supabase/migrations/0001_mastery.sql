@@ -476,20 +476,24 @@ grant all on public.skills, public.children, public.consent_ledger, public.sessi
 --     ('mastery-v1') exactly; db/scripts/reconcile.mjs replays the log through
 --     the JS function and diffs — divergence fails CI.
 --
--- !! BEFORE HOSTED APPLY: verify_pin() below assumes pgcrypto crypt() hashes
--- (crypt(pin, pin_hash) = pin_hash). CONFIRM the real scheme used by the
--- production signup_or_login before this file ever reaches a hosted database.
+-- PIN scheme CONFIRMED against the live production functions (owner, 2026-07-03):
+-- bcrypt via pgcrypto — verify with pin_hash = crypt(p_pin, pin_hash), exactly
+-- like signup_or_login/submit_score. pgcrypto's crypt/gen_salt live in the
+-- `extensions` schema on Supabase, hence the search_path below (pg_temp pinned
+-- last as hardening). Name resolution is case-insensitive + trimmed and the
+-- PIN must match ^[0-9]{4}$ — matching signup_or_login exactly, so a valid
+-- child is never rejected on a name-case/whitespace mismatch.
 -- ============================================================================
 create or replace function public.verify_pin(p_pin text, p_hash text)
 returns boolean language sql immutable
-set search_path = public, extensions, pg_temp   -- Supabase installs pgcrypto in `extensions`
+set search_path = public, extensions, pg_temp   -- pgcrypto lives in `extensions` on Supabase
 as $$ select p_hash is not null and crypt(p_pin, p_hash) = p_hash $$;
 
 create or replace function public.record_attempts(p_name text, p_pin text, p_batch jsonb)
 returns json
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp   -- match the prod RPCs (pgcrypto in `extensions`)
 as $$
 declare
   v_key         text := 'rec:' || lower(trim(coalesce(p_name,'')));
@@ -514,7 +518,10 @@ declare
   v_gap_days    numeric;
 begin
   -- ---- shape checks (cheap, before any lookup) ----
+  -- PIN format ^[0-9]{4}$ required, matching signup_or_login exactly; a
+  -- malformed PIN is a client bug (bad_request), not a brute-force strike.
   if p_name is null or p_pin is null or p_batch is null
+     or p_pin !~ '^[0-9]{4}$'
      or jsonb_typeof(p_batch->'attempts') <> 'array' then
     return json_build_object('ok', false, 'error', 'bad_request');
   end if;

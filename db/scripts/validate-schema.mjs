@@ -55,8 +55,11 @@ if (!process.argv.includes('--static')) {
     await applyMigrations(db.client, { local: true });
     const n = await seedSkills(db.client);
 
-    const NEW_TABLES = ['skills', 'children', 'consent_ledger', 'attempts',
-                        'child_skill_mastery', 'child_skill_misconception'];
+    const NEW_TABLES = ['skills', 'children', 'consent_ledger', 'attempts', 'sessions',
+                        'child_skill_mastery', 'child_skill_misconception',
+                        'tutor_grants', 'rpc_rate_limits'];
+    // deny-by-default tables that intentionally have ZERO policies (definer/service only)
+    const NO_CLIENT_TABLES = ['rpc_rate_limits'];
 
     const rls = await db.client.query(
       `select relname, relrowsecurity, relforcerowsecurity
@@ -78,8 +81,11 @@ if (!process.argv.includes('--static')) {
       `select tablename, count(*)::int as n from pg_policies where schemaname='public' group by tablename`);
     const polMap = Object.fromEntries(pol.rows.map(r => [r.tablename, r.n]));
     for (const t of NEW_TABLES) {
-      if (polMap[t] > 0) ok(`${t}: ${polMap[t]} RLS polic${polMap[t] > 1 ? 'ies' : 'y'}`);
-      else bad(`${t}: no RLS policies (deny-by-default blocks clients, but Phase-0 spec expects explicit owner policies)`);
+      if (NO_CLIENT_TABLES.includes(t)) {
+        if (!polMap[t]) ok(`${t}: zero policies (intentional — service/definer-only, deny-by-default)`);
+        else bad(`${t}: expected ZERO policies (service-only table) but found ${polMap[t]}`);
+      } else if (polMap[t] > 0) ok(`${t}: ${polMap[t]} RLS polic${polMap[t] > 1 ? 'ies' : 'y'}`);
+      else bad(`${t}: no RLS policies (deny-by-default blocks clients, but spec expects explicit owner policies)`);
     }
 
     const cnt = await db.client.query(`select count(*)::int as n from public.skills`);

@@ -13,6 +13,10 @@
 -- target is not a supabase.co host (see db/scripts/lib.mjs prod guard).
 -- ============================================================================
 
+-- ---- Supabase-equivalent extensions layout (pgcrypto lives in `extensions`) ----
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
+
 -- ---- Supabase-equivalent roles ----
 do $$ begin
   if not exists (select 1 from pg_roles where rolname = 'anon') then
@@ -41,6 +45,7 @@ language sql stable as $$
 $$;
 grant usage on schema auth to anon, authenticated, service_role;
 grant execute on function auth.uid() to anon, authenticated, service_role;
+grant usage on schema extensions to anon, authenticated, service_role;
 
 -- ---- Mirror of the EXISTING production players table (structure only) ----
 -- Production: players + SECURITY DEFINER RPCs signup_or_login / submit_score /

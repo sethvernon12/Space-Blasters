@@ -91,13 +91,8 @@ test('client updates on children are limited to cosmetic columns', async () => {
   });
 });
 
-test('no consent, no data: attempts for a consent-less child are rejected', async () => {
-  await as('authenticated', FIX.parentA, async (c) => {
-    await rejects(c, `insert into public.attempts (child_id, skill_id, client_attempt_id, result)
-         values ($1, 'add5', gen_random_uuid(), 'correct')`,
-      [FIX.childA3], /row-level security/i, 'childA3 has no consent_ledger link');
-  });
-});
+// (the consent gate itself is exercised through the RPC below — direct client
+//  inserts are refused wholesale by the one-write-path test above)
 
 test('cross-FAMILY reads return zero rows on every child-scoped table', async () => {
   await as('authenticated', FIX.parentB, async (c) => {
@@ -109,11 +104,16 @@ test('cross-FAMILY reads return zero rows on every child-scoped table', async ()
   });
 });
 
-test('cross-FAMILY write: parent B cannot insert attempts for child A', async () => {
-  await as('authenticated', FIX.parentB, async (c) => {
-    await rejects(c, `insert into public.attempts (child_id, skill_id, client_attempt_id, result)
-         values ($1, 'add5', gen_random_uuid(), 'correct')`, [FIX.childA1], /row-level security/i);
-  });
+test('attempts have ONE write path: every direct client insert is refused', async () => {
+  // Phase 2: the record_attempts RPC is the sole writer (it alone couples the
+  // event log to the mastery projection). Direct writes — even for your OWN
+  // child — are gone entirely (no grant), so cross-family writes are moot too.
+  for (const [sub, child] of [[FIX.parentA, FIX.childA1], [FIX.parentB, FIX.childA1], [FIX.childA1Login, FIX.childA1]]) {
+    await as('authenticated', sub, async (c) => {
+      await rejects(c, `insert into public.attempts (child_id, skill_id, client_attempt_id, result)
+           values ($1, 'add5', gen_random_uuid(), 'correct')`, [child], /permission denied/i);
+    });
+  }
 });
 
 test('cross-CHILD, same family: a child login sees ONLY itself, not its sibling', async () => {
@@ -121,18 +121,13 @@ test('cross-CHILD, same family: a child login sees ONLY itself, not its sibling'
     const rows = (await c.query('select id from public.children')).rows.map(r => r.id);
     assert.deepEqual(rows, [FIX.childA1]);                     // sibling A2 invisible
     assert.equal(await count(c, 'select 1 from public.attempts where child_id = $1', [FIX.childA2]), 0);
-    // can log its own attempt...
-    await c.query(
-      `insert into public.attempts (child_id, skill_id, client_attempt_id, result)
-       values ($1, 'add5', gen_random_uuid(), 'correct')`, [FIX.childA1]);
-    // ...but not the sibling's
-    await rejects(c, `insert into public.attempts (child_id, skill_id, client_attempt_id, result)
-         values ($1, 'add5', gen_random_uuid(), 'correct')`, [FIX.childA2], /row-level security/i);
+    assert.equal(await count(c, 'select 1 from public.sessions where child_id = $1', [FIX.childA2]), 0);
   });
 });
 
 test('anon (the public game key) can touch nothing', async () => {
-  for (const t of ['children', 'attempts', 'child_skill_mastery', 'child_skill_misconception', 'consent_ledger', 'skills']) {
+  for (const t of ['children', 'attempts', 'child_skill_mastery', 'child_skill_misconception',
+                   'consent_ledger', 'skills', 'sessions', 'tutor_grants', 'rpc_rate_limits']) {
     await as('anon', null, async (c) => {
       await rejects(c, `select * from public.${t} limit 1`, undefined, /permission denied/i, `anon read ${t}`);
     });
@@ -174,6 +169,154 @@ test('service_role bypasses RLS (sanity — this is WHY Edge Functions must re-f
   await as('service_role', null, async (c) => {
     const n = (await c.query('select count(*)::int as n from public.children')).rows[0].n;
     assert.equal(n, 5); // sees all children incl. the unclaimed legacy one
+  });
+});
+
+// ---------------------------------------------------------------------------
+// record_attempts RPC — the interim-keyed (name+PIN) atomic write path
+// ---------------------------------------------------------------------------
+const SESSION = () => ({
+  client_session_id: crypto.randomUUID(),
+  mode: 'journey',
+  started_at: new Date().toISOString(),
+});
+const ATT = (over = {}) => ({
+  client_attempt_id: crypto.randomUUID(),
+  stage_index: 0, skill: 'addition', result: 'correct',
+  problem_text: '2 + 3', correct_answer: 5, chosen_answer: 5,
+  response_ms: 4100, input_method: 'voice', asr_confidence: 0.9,
+  run_time_s: 12.3, level: 1, ...over,
+});
+const callRpc = async (c, name, pin, batch) =>
+  (await c.query(`select public.record_attempts($1, $2, $3::jsonb) as r`, [name, pin, JSON.stringify(batch)])).rows[0].r;
+
+test('RPC happy path: atomic insert + mastery + session; replay is a no-op (idempotent)', async () => {
+  await as('anon', null, async (c) => {
+    // use make10 (stage 4) — no seeded fixture rows for it, so expectations are exact
+    const M = { stage_index: 4, skill: 'make-ten', problem_text: '3 + 7', correct_answer: 10, chosen_answer: 10 };
+    const batch = { ...SESSION(), attempts: [
+      ATT(M), ATT({ ...M, result: 'incorrect', chosen_answer: 9 }), ATT({ ...M, result: 'invalid' })] };
+    const r1 = await callRpc(c, 'NovaPilot', FIX.pinNova, batch);
+    assert.deepEqual({ ok: r1.ok, inserted: r1.inserted, duplicates: r1.duplicates, rejected: r1.rejected },
+                     { ok: true, inserted: 3, duplicates: 0, rejected: 0 });
+    // exact same batch again (offline replay / multi-device flush)
+    const r2 = await callRpc(c, 'NovaPilot', FIX.pinNova, batch);
+    assert.deepEqual({ inserted: r2.inserted, duplicates: r2.duplicates }, { inserted: 0, duplicates: 3 });
+    // switch to service view INSIDE the same tx to inspect what was written
+    await c.query(`set local role service_role`);
+    const att = await c.query(
+      `select result, standard_code from public.attempts
+        where child_id = $1 and skill_id = 'make10'`, [FIX.childA1]);
+    assert.equal(att.rows.length, 3, 'exactly 3 rows despite replay');
+    assert.ok(att.rows.every(r => r.standard_code === 'K.OA.A.4'), 'CCSS snapshot stamped');
+    const m = (await c.query(
+      `select alpha, beta, attempts_count, correct_count from public.child_skill_mastery
+        where child_id = $1 and skill_id = 'make10'`, [FIX.childA1])).rows[0];
+    // 1 correct + 1 incorrect counted; 'invalid' logged but NEVER counted
+    // (decay over the ~0s between the two events is ~1, so alpha≈2, beta=2)
+    assert.ok(Math.abs(m.alpha - 2) < 1e-6 && Math.abs(m.beta - 2) < 1e-6, `alpha/beta ≈ 2/2, got ${m.alpha}/${m.beta}`);
+    assert.deepEqual({ n: m.attempts_count, cc: m.correct_count }, { n: 2, cc: 1 });
+    const s = (await c.query(
+      `select attempts_count, correct_count from public.sessions where client_session_id = $1`,
+      [batch.client_session_id])).rows[0];
+    assert.deepEqual({ n: s.attempts_count, cc: s.correct_count }, { n: 2, cc: 1 });
+  });
+});
+
+test('RPC auth: wrong PIN -> generic denied, 5 strikes -> locked even for the right PIN', async () => {
+  await as('anon', null, async (c) => {
+    for (let i = 0; i < 5; i++) {
+      const r = await callRpc(c, 'NovaPilot', '0000', { ...SESSION(), attempts: [] });
+      assert.deepEqual({ ok: r.ok, error: r.error }, { ok: false, error: 'denied' }, 'no PIN oracle');
+    }
+    const locked = await callRpc(c, 'NovaPilot', FIX.pinNova, { ...SESSION(), attempts: [ATT()] });
+    assert.deepEqual({ ok: locked.ok, error: locked.error }, { ok: false, error: 'rate_limited' });
+    await c.query(`set local role service_role`);
+    // RPC-written rows always carry a session; seeded fixtures don't — so this
+    // isolates "rows written during THIS test" (each test tx rolls back anyway)
+    assert.equal(await count(c, `select 1 from public.attempts where child_id = $1 and session_id is not null`, [FIX.childA1]), 0,
+      'zero rows written during a brute-force run');
+  });
+});
+
+test('RPC consent gate: a consent-less legacy child is refused, zero rows', async () => {
+  await as('anon', null, async (c) => {
+    const r = await callRpc(c, 'LegacyKid', FIX.pinLegacy, { ...SESSION(), attempts: [ATT()] });
+    assert.deepEqual({ ok: r.ok, error: r.error }, { ok: false, error: 'no_consent' });
+    await c.query(`set local role service_role`);
+    assert.equal(await count(c, `select 1 from public.attempts where child_id = $1`, [FIX.legacyChild]), 0);
+    assert.equal(await count(c, `select 1 from public.sessions where child_id = $1`, [FIX.legacyChild]), 0);
+  });
+});
+
+test('RPC forgery: client-supplied child ids are ignored; bad stages/skills rejected', async () => {
+  await as('anon', null, async (c) => {
+    const batch = { ...SESSION(), child_id: FIX.childB1,       // forged top-level child id
+      attempts: [
+        { ...ATT(), child_id: FIX.childB1 },                   // forged per-attempt child id
+        ATT({ stage_index: 999 }),                             // unknown stage
+        ATT({ skill: 'division', stage_index: 0 }),            // tag/stage mismatch
+        ATT({ result: 'misconception' }),                      // derived label — client may not bake it
+      ] };
+    const r = await callRpc(c, 'NovaPilot', FIX.pinNova, batch);
+    assert.deepEqual({ inserted: r.inserted, rejected: r.rejected }, { inserted: 1, rejected: 3 });
+    await c.query(`set local role service_role`);
+    // the one inserted row landed on the SERVER-resolved child, not the forged one
+    // (session_id filter isolates RPC-written rows from seeded fixtures)
+    assert.equal(await count(c, `select 1 from public.attempts where child_id = $1 and session_id is not null`, [FIX.childB1]), 0);
+    assert.equal(await count(c, `select 1 from public.attempts where child_id = $1 and session_id is not null`, [FIX.childA1]), 1);
+  });
+});
+
+test('RPC rate cap: >6 calls in a minute for one name are refused', async () => {
+  await as('anon', null, async (c) => {
+    let refused = 0;
+    for (let i = 0; i < 8; i++) {
+      const r = await callRpc(c, 'NovaPilot', FIX.pinNova, { ...SESSION(), attempts: [] });
+      if (!r.ok && r.error === 'rate_limited') refused++;
+    }
+    assert.equal(refused, 2, 'calls 7 and 8 hit the per-minute cap');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tutor scoping + sessions read scope
+// ---------------------------------------------------------------------------
+test('tutor scope: granted child only, read-only, and revocation cuts access', async () => {
+  await as('authenticated', FIX.tutor, async (c) => {
+    const kids = (await c.query('select id from public.children')).rows.map(r => r.id);
+    assert.deepEqual(kids, [FIX.childA1], 'tutor sees ONLY the granted child');
+    assert.ok(await count(c, 'select 1 from public.child_skill_mastery where child_id = $1', [FIX.childA1]) > 0);
+    assert.ok(await count(c, 'select 1 from public.sessions where child_id = $1', [FIX.childA1]) > 0);
+    assert.equal(await count(c, 'select 1 from public.attempts where child_id = $1', [FIX.childA2]), 0);
+    assert.equal(await count(c, 'select 1 from public.consent_ledger'), 0, 'consent ledger is parent-only');
+    // children_update policy matches no rows for a tutor -> silent 0-row no-op
+    const upd = await c.query(`update public.children set nickname = 'hax' where id = $1`, [FIX.childA1]);
+    assert.equal(upd.rowCount, 0, 'tutor cannot modify the child');
+    await rejects(c, `insert into public.attempts (child_id, skill_id, client_attempt_id, result)
+         values ($1, 'add5', gen_random_uuid(), 'correct')`, [FIX.childA1], /permission denied/i);
+    // re-scoping a grant to another child is blocked at the COLUMN level
+    await rejects(c, `update public.tutor_grants set child_id = $1 where tutor_id = $2`,
+      [FIX.childA2, FIX.tutor], /permission denied/i, 'tutor cannot re-scope own grant');
+  });
+  // parent revokes -> tutor loses everything (same tx: revoke as parent, read as tutor)
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`update public.tutor_grants set active = false, revoked_at = now() where tutor_id = $1`, [FIX.tutor]);
+    await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub: FIX.tutor })]);
+    assert.equal(await count(c, 'select 1 from public.children'), 0, 'revoked tutor sees nothing');
+    assert.equal(await count(c, 'select 1 from public.child_skill_mastery'), 0);
+  });
+});
+
+test('sessions: parents see own children’s sessions only; no client writes', async () => {
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.sessions where child_id = $1', [FIX.childA1]) > 0);
+    await rejects(c, `insert into public.sessions (child_id, client_session_id, started_at)
+         values ($1, gen_random_uuid(), now())`, [FIX.childA1], /permission denied/i);
+    await rejects(c, `update public.sessions set attempts_count = 99 where child_id = $1`, [FIX.childA1], /permission denied/i);
+  });
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.sessions where child_id = $1', [FIX.childA1]), 0);
   });
 });
 

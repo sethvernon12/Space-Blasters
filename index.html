@@ -965,13 +965,180 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       signin: (name, pin) => rpc('signup_or_login', { p_name:name, p_pin:pin }),
       submit: (name, pin, score, stage, grade, correct, color) =>
         rpc('submit_score', { p_name:name, p_pin:pin, p_score:score, p_stage:stage, p_grade:grade, p_correct:correct, p_color:color }),
-      leaderboard: (limit=20) => rpc('get_leaderboard', { p_limit:limit })
+      leaderboard: (limit=20) => rpc('get_leaderboard', { p_limit:limit }),
+      // Phase 2 (flag-gated recorder): batch answer recording; name+PIN verified server-side
+      recordAttempts: (name, pin, batch) => rpc('record_attempts', { p_name:name, p_pin:pin, p_batch:batch })
     };
   })();
   // Logged-in account for this session. `online` flips false if the network is unreachable so the
   // game still plays offline (scores just won't save).
   let account = { name:'', pin:'', online:false, signedIn:false };
   try { const s = JSON.parse(localStorage.getItem('mb_account')||'null'); if (s && s.name && s.pin){ account.name=s.name; account.pin=s.pin; } } catch(_){}
+
+  // ============================================================================
+  // ATTEMPT RECORDING (Phase 2) — FEATURE-FLAGGED, DEFAULT OFF, FAIL-OPEN.
+  // OFF: every entry point below returns immediately — game.log, the report and
+  // the leaderboard behave exactly as before, and no storage or network is
+  // touched. ON (nowhere yet — requires the hosted dev e2e + owner approval):
+  // answers buffer into an IndexedDB outbox and flush as batches every ~8s /
+  // on pause / on game over to the record_attempts RPC (name+PIN verified
+  // server-side; the client never chooses a child id). FAIL-OPEN: every call
+  // is wrapped — an error, quota, or offline network can never block gameplay,
+  // break the leaderboard, or cost a life; batches wait in the outbox (capped;
+  // oldest dropped) and permanent server refusals are dropped silently.
+  // ============================================================================
+  const FEATURE_RECORD_ATTEMPTS = false;   // flip only after hosted-dev e2e + owner approval
+  const Recorder = (function(){
+    let enabled = FEATURE_RECORD_ATTEMPTS;
+    let idb = null, idbFailed = false;
+    let mem = [];                          // in-memory fallback outbox (fail-open)
+    let sess = null;                       // {id, mode, startedAt, endedAt}
+    let timer = null, flushing = false, lastError = null;
+    const OUTBOX_MAX = 500, BATCH_MAX = 200, FLUSH_EVERY_MS = 8000;
+
+    const uuid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, () => (Math.random()*16|0).toString(16));
+
+    // ---- IndexedDB wrappers: every failure resolves harmlessly ----
+    function openIdb(){
+      return new Promise((resolve) => {
+        try {
+          const req = indexedDB.open('mb_outbox', 1);
+          req.onupgradeneeded = () => { try { req.result.createObjectStore('attempts', { keyPath: 'client_attempt_id' }); } catch(_){} };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(null);
+          req.onblocked = () => resolve(null);
+        } catch(_){ resolve(null); }
+      });
+    }
+    async function store(){
+      if (idb || idbFailed) return idb;
+      idb = await openIdb();
+      if (!idb) idbFailed = true;          // fall back to the in-memory queue
+      return idb;
+    }
+    function tx(d, mode, fn){
+      return new Promise((resolve) => {
+        try {
+          const t = d.transaction('attempts', mode), s = t.objectStore('attempts');
+          const out = fn(s);
+          t.oncomplete = () => resolve(out && out.result !== undefined ? out.result : true);
+          t.onerror = () => resolve(null);
+          t.onabort = () => resolve(null);
+        } catch(_){ resolve(null); }
+      });
+    }
+    async function allRows(){
+      const d = await store();
+      if (!d) return mem.slice();
+      const rows = await tx(d, 'readonly', s => s.getAll());
+      return Array.isArray(rows) ? rows : [];
+    }
+    async function enqueue(row){
+      const d = await store();
+      if (!d){ mem.push(row); if (mem.length > OUTBOX_MAX) mem.shift(); return; }
+      await tx(d, 'readwrite', s => s.put(row));
+      const rows = await allRows();                       // cap: drop oldest beyond OUTBOX_MAX
+      if (rows.length > OUTBOX_MAX){
+        rows.sort((a,b) => (a.queued_at||0) - (b.queued_at||0));
+        const drop = rows.slice(0, rows.length - OUTBOX_MAX);
+        await tx(d, 'readwrite', s => { drop.forEach(r => s.delete(r.client_attempt_id)); });
+      }
+    }
+    async function removeRows(rows){
+      const d = await store();
+      if (!d){ const ids = new Set(rows.map(r => r.client_attempt_id)); mem = mem.filter(r => !ids.has(r.client_attempt_id)); return; }
+      await tx(d, 'readwrite', s => { rows.forEach(r => s.delete(r.client_attempt_id)); });
+    }
+
+    // ---- flush one session-group per call; transient failures keep the queue ----
+    async function flush(){
+      if (!enabled || flushing) return 'skipped';
+      if (!account.name || !account.pin) return 'no-identity';   // keep queued
+      flushing = true;
+      try {
+        const rows = await allRows();
+        if (!rows.length) return 'empty';
+        const sid = rows[0].client_session_id;
+        const group = rows.filter(r => r.client_session_id === sid).slice(0, BATCH_MAX);
+        const res = await Backend.recordAttempts(account.name, account.pin, {
+            client_session_id: sid,
+            mode: group[0].mode || null,
+            started_at: group[0].session_started_at || null,
+            ended_at: (sess && sess.id === sid) ? (sess.endedAt || null) : (group[0].session_ended_at || null),
+            attempts: group.map(r => ({
+              client_attempt_id: r.client_attempt_id,
+              stage_index: r.stage_index, skill: r.skill, result: r.result,
+              problem_text: r.problem_text, correct_answer: r.correct_answer,
+              chosen_answer: r.chosen_answer, response_ms: r.response_ms,
+              input_method: r.input_method, asr_confidence: r.asr_confidence,
+              run_time_s: r.run_time_s, level: r.level,
+            })),
+        });
+        if (res && (res.ok === true
+            || res.error === 'no_profile' || res.error === 'no_consent'
+            || res.error === 'bad_request' || res.error === 'denied')){
+          // success (inserted/duplicate/rejected all consumed) or a PERMANENT
+          // refusal — drop the group silently. Retrying 'denied' forever would
+          // brute-force our own rate limiter.
+          await removeRows(group);
+          return res.ok === true ? 'flushed' : 'dropped';
+        }
+        return 'queued';   // transient (rate_limited / unexpected shape): retry later
+      } catch(e){ lastError = String((e && e.message) || e); return 'queued'; /* offline/HTTP error — keep queued; NEVER disturb gameplay */ }
+      finally { flushing = false; }
+    }
+
+    return {
+      // called from startGame(); a session groups this run's attempts
+      start(mode){
+        if (!enabled) return;
+        try {
+          sess = { id: uuid(), mode: mode || null, startedAt: new Date().toISOString(), endedAt: null };
+          if (timer) clearInterval(timer);
+          timer = setInterval(() => { flush(); }, FLUSH_EVERY_MS);
+        } catch(_){}
+      },
+      // called from recordAnswer() with the exact game.log entry
+      record(entry){
+        if (!enabled) return;
+        try {
+          if (!sess) this.start(null);
+          enqueue({
+            client_attempt_id: uuid(),
+            client_session_id: sess.id,
+            mode: sess.mode, session_started_at: sess.startedAt, session_ended_at: null,
+            queued_at: Date.now(),
+            stage_index: entry.stageIndex, skill: entry.skill,
+            result: entry.missed ? 'missed' : (entry.correct ? 'correct' : 'incorrect'),
+            problem_text: entry.text, correct_answer: entry.correctAnswer,
+            chosen_answer: entry.chosen ?? null,
+            response_ms: entry.responseMs ?? null,
+            input_method: entry.inputMethod ?? null,
+            asr_confidence: entry.asrConfidence ?? null,
+            run_time_s: entry.time, level: entry.level,
+          });
+        } catch(_){}
+      },
+      onPause(){ if (!enabled) return; try { flush(); } catch(_){} },
+      end(){
+        if (!enabled) return;
+        try {
+          if (sess) sess.endedAt = new Date().toISOString();
+          flush();
+          if (timer){ clearInterval(timer); timer = null; }
+        } catch(_){}
+      },
+      // test hooks (used by tools + local verification only)
+      __test: {
+        setEnabled(v){ enabled = !!v; },
+        isEnabled(){ return enabled; },
+        flush, allRows,
+        sessionId(){ return sess && sess.id; },
+        lastError(){ return lastError; },
+      },
+    };
+  })();
 
   // ---------- Game state ----------
   const State = { START:0, PLAY:1, OVER:2, DYING:3 };
@@ -1527,7 +1694,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
         typedT = now;
         if (typedBuf.endsWith(String(problem.answer))){
           const opt = problem.options.find(o => o.value === problem.answer) || { value: problem.answer };
-          chooseAnswer(opt);
+          chooseAnswer(opt, 'typed');
           typedBuf = '';
         }
       }
@@ -1541,7 +1708,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     paused = p;
     const btn = document.getElementById('pauseBtn');
     if (btn) btn.textContent = paused ? '▶' : '⏸';
-    if (paused){ intentionalUnlock = true; if (document.exitPointerLock) document.exitPointerLock(); }
+    if (paused){ intentionalUnlock = true; if (document.exitPointerLock) document.exitPointerLock();
+      try { Recorder.onPause(); } catch(_){} }     // flush outbox on pause; no-op while flag OFF
     else { intentionalUnlock = false; tryLock(); }
   }
   function togglePause(){ setPause(!paused); }
@@ -1586,12 +1754,12 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     } catch(_){}
   }
   // Tap/click on one of the on-screen answer buttons? (returns true if it consumed the tap)
-  function tapAnswer(x, y){
+  function tapAnswer(x, y, method){
     if (!problem || problem.answered || problem.dead) return false;
     for (const o of problem.options){
       if (!o.w) continue;
       if (x >= o.x-6 && x <= o.x+o.w+6 && y >= o.y-8 && y <= o.y+o.h+8){
-        chooseAnswer(o);
+        chooseAnswer(o, method || 'tap');
         return true;
       }
     }
@@ -1625,7 +1793,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     // while UNLOCKED, a click can hit the on-screen answer buttons
     if (document.pointerLockElement !== canvas){
       const p = pointerPos(e);
-      if (tapAnswer(p.x, p.y)){ e.preventDefault(); return; }
+      if (tapAnswer(p.x, p.y, 'click')){ e.preventDefault(); return; }
     }
     // a trackpad press only locks the cursor — it does NOT drop a bomb (so you don't waste
     // your earned mega-bombs by pressing the trackpad). Bombs are dropped with SPACE / B.
@@ -1924,7 +2092,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   // ---------- Voice answers (Web Speech API, ultra-low latency) ----------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const Speech = { rec:null, supported:!!SR, enabled:false, listening:false, lastHeard:'',
-    wantOn:false, muteUntil:0, finals:[], lastVal:null, lastValT:0,
+    wantOn:false, muteUntil:0, finals:[], lastVal:null, lastValT:0, lastConfidence:null,
     // --- carryover guard ---------------------------------------------------------------
     // Chrome keeps growing ONE recognition segment, so a just-answered "six" stays in the
     // buffer and the next "four" merges into "64" (which no longer matches). We remember the
@@ -2085,7 +2253,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     if (ans === Speech.lastVal && performance.now() - Speech.lastValT < 450) return false;
     if (answerHeard(textTail, ans) || freshAnswerMatch(textTail, ans)){
       const correct = problem.options.find(o => o.value === ans) || { value: ans };
-      chooseAnswer(correct); afterVoiceAnswer(ans); return true;
+      chooseAnswer(correct, 'voice'); afterVoiceAnswer(ans); return true;
     }
     return false;
   }
@@ -2160,6 +2328,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
         for (let a = 0; a < r.length; a++){
           let txt = r[a].transcript;
           if (strip && txt.startsWith(Speech.cutText)) txt = txt.slice(strip);   // read only the NEW words
+          // remember the engine's confidence for THIS alternative — recorded on voice answers
+          Speech.lastConfidence = (typeof r[a].confidence === 'number' && r[a].confidence > 0) ? r[a].confidence : null;
           handleSpeech(txt, r.isFinal);
           if (!problem || problem.answered) return;
         }
@@ -2573,6 +2743,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     return {
       text, answer, skill,
       stageName: qstageName, stageIndex: qstageIdx,
+      shownAt: performance.now(),   // for responseMs = time from appearance to answer
       x: randInt(120, Math.max(140, W-120)),
       y: -40,
       vy: speed,
@@ -2620,9 +2791,10 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       if (typeof window.onMathAnswer === 'function')
         window.onMathAnswer(Object.assign({ mode: MODE.key, pilot: playerName }, entry));
     } catch(_){}
+    try { Recorder.record(entry); } catch(_){}   // no-op while the feature flag is OFF
   }
 
-  function chooseAnswer(opt) {
+  function chooseAnswer(opt, method) {
     // ignore clicks once answered, or repeated presses of an already-wrong option
     if (!problem || problem.answered || problem.dead || opt.wrong) return;
     const correct = (opt.value === problem.answer);
@@ -2633,7 +2805,12 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       correct,
       level: game.level,
       skill: problem.skill, stage: problem.stageName, stageIndex: problem.stageIndex,
-      time: (performance.now() - game.startTime)/1000
+      time: (performance.now() - game.startTime)/1000,
+      // Phase-2 primitives: time from problem appearance to answer, how it was
+      // answered, and (voice only) the recognizer's confidence
+      responseMs: problem.shownAt != null ? Math.round(performance.now() - problem.shownAt) : null,
+      inputMethod: method || null,
+      asrConfidence: method === 'voice' ? (Speech.lastConfidence ?? null) : null
     });
 
     if (correct) {
@@ -3059,7 +3236,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
           text: problem.text, correctAnswer: problem.answer,
           chosen: null, correct: false, level: game.level, missed:true,
           skill: problem.skill, stage: problem.stageName, stageIndex: problem.stageIndex,
-          time:(performance.now()-game.startTime)/1000
+          time:(performance.now()-game.startTime)/1000,
+          responseMs: null, inputMethod: null, asrConfidence: null   // never answered
         });
         spawnEnemyFromMiss(problem.x, problem.y);   // the fallen problem becomes an enemy
         noticeText = '⚠️ It got through — incoming enemy!'; noticeT = 70;
@@ -5419,12 +5597,14 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     if (easeBtnEl) easeBtnEl.classList.remove('hidden');
     updateHUD();
     startListening();   // begin voice recognition if mic was granted
+    try { Recorder.start(MODE.key); } catch(_){}   // no-op while the flag is OFF
     tryLock();          // capture the cursor inside the game window
   }
 
   function endGame(){
     state = State.OVER;
     stopListening();
+    try { Recorder.end(); } catch(_){}             // flush outbox; no-op while flag OFF
     canvas.style.cursor = 'default';
     if (document.pointerLockElement === canvas) document.exitPointerLock();
     hud.el.classList.add('hidden');
@@ -5902,7 +6082,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
 
   // expose a tiny test hook for verification (also used by tools/screenshot.mjs)
   window.__mathblaster = { makeProblem, summarize, parseSpokenNumbers, answerHeard, numToWords,
-    get game(){return game;}, buildReportText, startGame, endGame, spawnBoss };
+    get game(){return game;}, buildReportText, startGame, endGame, spawnBoss,
+    chooseAnswer, get problem(){return problem;}, recorder: Recorder.__test };
 
   loop();
 })();

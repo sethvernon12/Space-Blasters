@@ -57,3 +57,9 @@ migrate + validate + leak-test suite against a clean Postgres 16 service contain
 - Apply migrations to any real database — that is a human-approved dashboard/CLI step
   (see `docs/NEEDS_HUMAN.md` and CLAUDE.md NON-NEGOTIABLE #1).
 - Submit scores to the real leaderboard (screenshot tool aborts supabase.co requests).
+
+## Phase 2 additions
+```bash
+cd db && npm run reconcile      # projection == replayed attempt log (also a CI gate)
+cd tools && node verify-recording.mjs  # flag-OFF identical + fail-open proof in a real browser
+```

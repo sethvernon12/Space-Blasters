@@ -22,12 +22,22 @@ domains — to ship a change: edit `index.html`, verify, commit, push. That's it
    `update()`) so fire rate survives frame drops — preserve it. No `shadowBlur` in hot
    per-entity draw loops; big static art (skies, terrain, vignette) is cached to offscreen
    canvases.
-4. **Verify every change before committing.** Node is NOT installed on this machine; use
-   JavaScriptCore instead — extract the `<script>` block and parse it:
-   ```bash
-   python3 -c "import re;open('/tmp/game.js','w').write(re.search(r'<script>(.*?)</script>', open('index.html').read(), re.S).group(1))"
-   osascript -l JavaScript -e 'ObjC.import("Foundation"); const s=$.NSString.stringWithContentsOfFileEncodingError("/tmp/game.js",$.NSUTF8StringEncoding,null).js; try{new Function(s);"SYNTAX OK"}catch(e){"ERR: "+e.message}'
-   ```
+4. **Verify every change before committing.**
+   - *Syntax:* extract the `<script>` block and parse it:
+     ```bash
+     python3 -c "import re;open('/tmp/game.js','w').write(re.search(r'<script>(.*?)</script>', open('index.html').read(), re.S).group(1))"
+     node --check /tmp/game.js
+     ```
+   - *Visuals:* after ANY visual change, capture and **critically review** screenshots
+     before committing:
+     ```bash
+     cd tools && node screenshot.mjs   # → screens/ (gitignored): iPhone portrait,
+                                       #   iPhone landscape & desktop × start/game/results
+     ```
+     `tools/` has a local Playwright install (`npm install` there if missing, then
+     `npx playwright install chromium`). The script blocks all supabase.co requests so
+     test runs can NEVER touch the real leaderboard. It drives the game via the
+     `window.__mathblaster` hook (startGame / endGame / spawnBoss).
    Never leave the file broken. Commit after each completed, verified task; push only
    working states (push = production deploy).
 5. Do **not** start database, account, login, assignment, tutor, or Stripe work here.

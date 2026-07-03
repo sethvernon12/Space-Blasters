@@ -92,8 +92,12 @@
     z-index: 10;
   }
   .hidden { display: none !important; }
+  /* overlays are flex columns that can overflow+scroll — children must NEVER be flex-shrunk
+     below their content (that made wrapped text spill over its neighbors) */
+  .overlay > * { flex-shrink: 0; }
+  /* pause + ease sit as a centered pair just BELOW the HUD mission pill */
   #pauseBtn {
-    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    position: fixed; top: 64px; left: calc(50% - 78px);
     z-index: 40; width: 46px; height: 46px; border-radius: 50%;
     border: 2px solid rgba(125,211,252,0.6);
     background: rgba(12,18,40,0.72); color: #cfe8ff;
@@ -102,7 +106,7 @@
     box-shadow: 0 2px 10px rgba(0,0,0,0.5); backdrop-filter: blur(3px);
     transition: transform .08s, background .15s;
   }
-  #pauseBtn:hover { background: rgba(30,58,120,0.85); transform: translateX(-50%) scale(1.08); }
+  #pauseBtn:hover { background: rgba(30,58,120,0.85); transform: scale(1.08); }
   /* Touch bomb button — a big thumb-friendly round button (shown on touch devices during play) */
   #bombBtn {
     position: fixed; right: 16px; bottom: 120px;
@@ -260,20 +264,22 @@
   @media (max-width: 700px) {
     .mode-btn { font-size: 13px; padding: 7px 12px; }
   }
-  /* Ease-up button (during play) */
+  /* Ease-up button (during play) — pairs with the pause button below the mission pill */
   #easeBtn {
-    position: fixed; top: 66px; left: 50%; transform: translateX(-50%);
-    z-index: 40; border-radius: 24px; padding: 7px 16px;
-    border: 1.5px solid rgba(125,211,252,0.55);
+    position: fixed; top: 64px; left: calc(50% - 20px); height: 46px;
+    z-index: 40; border-radius: 23px; padding: 0 16px;
+    border: 2px solid rgba(125,211,252,0.55);
     background: rgba(12,18,40,0.72); color: #bfe3ff;
     font-family: inherit; font-size: 14px; font-weight: bold; cursor: pointer;
     box-shadow: 0 2px 10px rgba(0,0,0,0.5); backdrop-filter: blur(3px);
     transition: transform .08s, background .15s;
   }
-  #easeBtn:hover { background: rgba(30,58,120,0.85); transform: translateX(-50%) scale(1.06); }
-  @media (max-width: 700px) {
-    #easeBtn { top: auto; bottom: 208px; left: 12px; transform: none; }
-    #easeBtn:hover { transform: scale(1.06); }
+  #easeBtn:hover { background: rgba(30,58,120,0.85); transform: scale(1.06); }
+  /* short screens (phone landscape): tuck the controls into the bottom corners */
+  @media (max-height: 500px) {
+    #pauseBtn { top: auto; bottom: 96px; left: 12px; }
+    #easeBtn  { top: auto; bottom: 96px; left: 68px; }
+    #bombBtn  { bottom: 96px; }
   }
 
   /* symmetrical sign-in card */
@@ -430,8 +436,8 @@
     #micChip .ico { font-size: 11px; }
     #micChip .val { font-size: 11px; }
     #micState { max-width: 92px; }
-    #pauseBtn { top: auto; bottom: 150px; left: 12px; transform: none; }
-    #pauseBtn:hover { transform: scale(1.08); }
+    #pauseBtn { top: auto; bottom: 150px; left: 12px; }
+    #easeBtn  { top: auto; bottom: 208px; left: 12px; }
     .subtitle { font-size: 14px; margin-bottom: 14px; }
     .voice-note { padding: 10px 14px 10px 12px; gap: 10px; margin: 4px 0 14px; }
     .vn-badge { width: 42px; height: 42px; font-size: 20px; }
@@ -581,11 +587,17 @@
   let W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
 
   function resize() {
-    // visualViewport is the HONEST visible area on iOS (innerHeight can include space hidden
-    // under Safari's bottom toolbar, which was clipping the bottom of the UI).
+    // visualViewport is the HONEST visible height on iOS (innerHeight can include space hidden
+    // under Safari's bottom toolbar, which was clipping the bottom of the UI). But only trust
+    // it at scale 1 and within a sane band of the layout size — during pinch-zoom (or emulator
+    // glitches) it reports the zoomed region, which must NOT resize the game.
+    let w = window.innerWidth, h = window.innerHeight;
     const vv = window.visualViewport;
-    W = Math.round(vv ? vv.width : window.innerWidth);
-    H = Math.round(vv ? vv.height : window.innerHeight);
+    if (vv && Math.abs((vv.scale || 1) - 1) < 0.01){
+      if (vv.width  > w*0.8  && vv.width  <= w+1) w = Math.round(vv.width);
+      if (vv.height > h*0.55 && vv.height <= h+1) h = Math.round(vv.height);
+    }
+    W = w; H = h;
     canvas.width = W * DPR; canvas.height = H * DPR;
     canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -3703,8 +3715,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       ctx.save();
       ctx.globalAlpha = 0.5 + 0.3*Math.sin(performance.now()/300);
       ctx.fillStyle = '#fde68a'; ctx.font = 'bold 16px Trebuchet MS';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText('🖱️ click once to lock the cursor in the game', W/2, 14);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText('🖱️ click once to lock the cursor in the game', W/2, uiBottom().y - 14);
       ctx.restore();
     }
 
@@ -3756,6 +3768,10 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   function drawTurret(t){
     ctx.save();
     ctx.translate(t.x, t.y);
+    // on narrow screens the corner turrets sit behind the answer buttons — shrink them so
+    // their glow doesn't clutter the row
+    const tk = Math.max(0.58, Math.min(1, W/860));
+    if (tk < 1) ctx.scale(tk, tk);
     // armored mount platform
     ctx.fillStyle = '#1c2748'; ctx.strokeStyle='#46598f'; ctx.lineWidth=3;
     roundRect(-34, 2, 68, 30, 8); ctx.fill(); ctx.stroke();
@@ -3801,6 +3817,8 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const tm = performance.now();
     ctx.save();
     ctx.translate(t.x, t.y);
+    const tk = Math.max(0.58, Math.min(1, W/860));
+    if (tk < 1) ctx.scale(tk, tk);
     // pulsing energy aura
     ctx.save(); ctx.globalCompositeOperation='lighter';
     const aura = ctx.createRadialGradient(0,0,8,0,0,70);
@@ -4089,8 +4107,10 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     }
     ctx.restore();
 
-    // ---- shield + health bar + name ----
-    const bw = R*2.3, bx = boss.x-bw/2, by = boss.y - R - 30;
+    // ---- shield + health bar + name (clamped so they never run off-screen) ----
+    const bw = Math.min(R*2.3, W - 24);
+    const cxB = Math.max(bw/2 + 10, Math.min(W - bw/2 - 10, boss.x));
+    const bx = cxB - bw/2, by = boss.y - R - 30;
     ctx.save();
     // shield bar (cyan) sits just above the HP bar while the shield holds
     if (boss.shield > 0){
@@ -4102,7 +4122,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     const hpcol = hpFrac>0.5 ? '#86efac' : hpFrac>0.25 ? '#ffd36e' : '#ff5266';
     ctx.fillStyle = hpcol; ctx.fillRect(bx,by,bw*hpFrac,8);
     ctx.fillStyle='#ffe0e6'; ctx.font='bold 13px Trebuchet MS'; ctx.textAlign='center'; ctx.textBaseline='bottom';
-    ctx.fillText('☠ ' + BOSS_NAMES[boss.design % BOSS_NAMES.length] + ' · BOSS ' + boss.num, boss.x, by-4);
+    ctx.fillText('☠ ' + BOSS_NAMES[boss.design % BOSS_NAMES.length] + ' · BOSS ' + boss.num, cxB, by-4);
     ctx.restore();
   }
 
@@ -4916,7 +4936,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     if (noticeT <= 0 || !noticeText) return;
     ctx.save();
     ctx.globalAlpha = Math.min(1, noticeT/20);
-    ctx.font = 'bold 40px Trebuchet MS';
+    ctx.font = 'bold ' + Math.min(40, Math.max(21, Math.round(W*0.055))) + 'px Trebuchet MS';
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle = noticeText[0]==='💥' ? '#fda4af' : '#fde68a';
     ctx.shadowColor = noticeText[0]==='💥' ? '#ff6b6b' : '#ffd36e'; ctx.shadowBlur=18;
@@ -5523,7 +5543,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
     } else {
       game.log.forEach((e,i)=>{
         const status = e.correct ? `<span class="tag ok">Correct</span>`
-                      : e.missed ? `<span class="tag bad">Missed (fell)</span>`
+                      : e.missed ? `<span class="tag bad">Missed</span>`
                       : `<span class="tag bad">Wrong</span>`;
         const yourAns = e.missed ? '—' : e.chosen;
         rows += `<tr class="${e.correct?'ok-row':'bad-row'}">
@@ -5880,8 +5900,9 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
   document.getElementById('lbBtn2').addEventListener('click', ()=> openLeaderboard('result'));
   document.getElementById('lbCloseBtn').addEventListener('click', closeLeaderboard);
 
-  // expose a tiny test hook for verification
-  window.__mathblaster = { makeProblem, summarize, parseSpokenNumbers, answerHeard, numToWords, get game(){return game;}, buildReportText };
+  // expose a tiny test hook for verification (also used by tools/screenshot.mjs)
+  window.__mathblaster = { makeProblem, summarize, parseSpokenNumbers, answerHeard, numToWords,
+    get game(){return game;}, buildReportText, startGame, endGame, spawnBoss };
 
   loop();
 })();

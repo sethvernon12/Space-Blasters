@@ -35,7 +35,9 @@ npm run seed            # migrate + seed demo families/attempts/mastery, then re
 ```bash
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres npm test
 ```
-Any URL containing `supabase.co` / the prod project ref is refused with a hard error.
+Only local hosts are accepted (allowlist; anything Supabase-like is refused with a hard
+error). **The target's `public` schema is DROPPED and recreated on every run** — point
+this only at a scratch database (that's what CI's throwaway service container is).
 
 ## Game verification (unchanged from before)
 ```bash

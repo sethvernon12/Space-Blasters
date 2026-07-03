@@ -50,6 +50,12 @@ export async function ephemeralDb() {
     assertNotProd(process.env.DATABASE_URL);
     const client = new Client({ connectionString: process.env.DATABASE_URL });
     await client.connect();
+    // Start CLEAN every invocation (matches the embedded path): CI's service
+    // container persists across steps, so a second script would otherwise
+    // re-apply migrations onto an already-migrated schema and fail.
+    // This is safe BECAUSE the guard above only ever admits scratch databases.
+    await client.query('drop schema if exists public cascade');
+    await client.query('create schema public');
     return { client, url: process.env.DATABASE_URL, stop: () => client.end() };
   }
 

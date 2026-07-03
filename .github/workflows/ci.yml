@@ -1,0 +1,62 @@
+# CI — gates every push/PR. Three jobs:
+#   1. game-syntax : the shipped game's <script> must parse
+#   2. taxonomy    : taxonomy/DATA_MAP must match the REAL code (static checks)
+#   3. db-security : migrations apply to a clean Postgres 16 and the RLS
+#                    cross-child leak test passes (this is the deploy gate that
+#                    CLAUDE.md hard rule #2 requires from Phase 3 on)
+name: ci
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  game-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: extract + parse the game script
+        run: |
+          python3 -c "import re;open('/tmp/game.js','w').write(re.search(r'<script>(.*?)</script>', open('index.html').read(), re.S).group(1))"
+          node --check /tmp/game.js
+
+  taxonomy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: static taxonomy/data-map validation against the real code
+        run: node db/scripts/validate-schema.mjs --static
+
+  db-security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: install db tooling
+        working-directory: db
+        run: npm ci --ignore-scripts
+      - name: migrations apply cleanly
+        working-directory: db
+        run: npm run migrate
+      - name: schema security posture (RLS forced, zero anon grants)
+        working-directory: db
+        run: npm run validate
+      - name: cross-child data-leak test
+        working-directory: db
+        run: npm test

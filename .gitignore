@@ -2,3 +2,5 @@
 node_modules/
 .vercel
 screens/
+.env
+db/.pgdata-*/

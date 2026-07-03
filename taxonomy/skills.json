@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "source": "index.html STAGES ladder (23 stages) and skill tags (13), read directly from code on 2026-07-03",
+  "attributionRule": "An incoming game event resolves its skill via evt.stageIndex -> skills[position], NOT via the coarse tag. Review/preview problems already carry the PROBLEM's stageIndex.",
+  "notes": "id = game STAGES key = skills.id in the database = mastery.skill_id. category/altCategories = the game's emitted `skill` tags. ccssGap non-null flags an imperfect mapping for curriculum review.",
+  "skills": [
+    { "id": "add5",     "position": 0,  "name": "Add within 5",               "category": "addition",       "altCategories": [],             "gradeBand": "K",  "ccss": ["K.OA.A.5"],              "ccssGap": null },
+    { "id": "sub5",     "position": 1,  "name": "Subtract within 5",          "category": "subtraction",    "altCategories": [],             "gradeBand": "K",  "ccss": ["K.OA.A.5"],              "ccssGap": null },
+    { "id": "add10",    "position": 2,  "name": "Add within 10",              "category": "addition",       "altCategories": [],             "gradeBand": "1",  "ccss": ["1.OA.C.6", "K.OA.A.2"],  "ccssGap": null },
+    { "id": "sub10",    "position": 3,  "name": "Subtract within 10",         "category": "subtraction",    "altCategories": [],             "gradeBand": "1",  "ccss": ["1.OA.C.6", "K.OA.A.2"],  "ccssGap": null },
+    { "id": "make10",   "position": 4,  "name": "Make 10 (number bonds)",     "category": "make-ten",       "altCategories": [],             "gradeBand": "K",  "ccss": ["K.OA.A.4", "1.OA.C.6"],  "ccssGap": null },
+    { "id": "add20",    "position": 5,  "name": "Add within 20",              "category": "add-to-20",      "altCategories": [],             "gradeBand": "2",  "ccss": ["2.OA.B.2", "1.OA.C.6"],  "ccssGap": null },
+    { "id": "sub20",    "position": 6,  "name": "Subtract within 20",         "category": "sub-to-20",      "altCategories": [],             "gradeBand": "2",  "ccss": ["2.OA.B.2", "1.OA.C.6"],  "ccssGap": null },
+    { "id": "miss10",   "position": 7,  "name": "Missing number to 10",       "category": "missing-number", "altCategories": [],             "gradeBand": "1",  "ccss": ["1.OA.D.8", "1.OA.B.4"],  "ccssGap": null },
+    { "id": "miss20",   "position": 8,  "name": "Missing number to 20",       "category": "missing-number", "altCategories": [],             "gradeBand": "1",  "ccss": ["1.OA.D.8"],              "ccssGap": null },
+    { "id": "add2d",    "position": 9,  "name": "2-digit + 1-digit",          "category": "two-digit-add",  "altCategories": [],             "gradeBand": "1",  "ccss": ["1.NBT.C.4", "2.NBT.B.5"], "ccssGap": null },
+    { "id": "sub2d",    "position": 10, "name": "2-digit − 1-digit",          "category": "two-digit-sub",  "altCategories": [],             "gradeBand": "2",  "ccss": ["2.NBT.B.5"],             "ccssGap": null },
+    { "id": "add2d2d",  "position": 11, "name": "2-digit + 2-digit",          "category": "two-digit-both", "altCategories": [],             "gradeBand": "2",  "ccss": ["2.NBT.B.5"],             "ccssGap": "GAP: generator sums can exceed 100 (max 89+89=178), which crosses into 2.NBT.B.7 (within 1000); tag such items 2.NBT.B.7 when item-level tagging ships in Phase 2." },
+    { "id": "missBig",  "position": 12, "name": "Missing number (bigger)",    "category": "missing-number", "altCategories": [],             "gradeBand": "2",  "ccss": ["1.OA.D.8"],              "ccssGap": "GAP: targets reach 60, beyond the within-20 scope of 1.OA.D.8; no single CCSS code covers unknown-addend to 60 — nearest umbrella is 2.NBT.B.5 fluency. Flag for curriculum review." },
+    { "id": "mult2",    "position": 13, "name": "Multiply by 2",              "category": "multiplication", "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.C.7", "3.OA.A.1"],  "ccssGap": null },
+    { "id": "mult510",  "position": 14, "name": "Multiply by 5 & 10",         "category": "multiplication", "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.C.7", "3.OA.A.1"],  "ccssGap": null },
+    { "id": "multTo5",  "position": 15, "name": "Times tables to 5",          "category": "multiplication", "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.C.7"],              "ccssGap": null },
+    { "id": "multTo10", "position": 16, "name": "Times tables to 10",         "category": "multiplication", "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.C.7"],              "ccssGap": null },
+    { "id": "multMiss", "position": 17, "name": "Missing factor (? × 5 = 20)","category": "missing-factor", "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.A.4", "3.OA.B.6"],  "ccssGap": null },
+    { "id": "mult2d",   "position": 18, "name": "2-digit × 1-digit",          "category": "two-digit-mult", "altCategories": [],             "gradeBand": "4",  "ccss": ["4.NBT.B.5", "3.NBT.A.3"], "ccssGap": "PARTIAL: 3.NBT.A.3 covers only one-digit × multiples of 10; general 2-digit × 1-digit is grade-4 (4.NBT.B.5). Generator (11–40 × 2–9) straddles both." },
+    { "id": "div2510",  "position": 19, "name": "Divide by 2, 5, 10",         "category": "division",       "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.C.7", "3.OA.A.2"],  "ccssGap": null },
+    { "id": "divTo10",  "position": 20, "name": "Division facts",             "category": "division",       "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.C.7"],              "ccssGap": null },
+    { "id": "divMiss",  "position": 21, "name": "Missing number (20 ÷ ? = 4)","category": "missing-factor", "altCategories": [],             "gradeBand": "3",  "ccss": ["3.OA.A.4", "3.OA.B.6"],  "ccssGap": null },
+    { "id": "mixMD",    "position": 22, "name": "Mixed × and ÷",              "category": "multiplication", "altCategories": ["division"],   "gradeBand": "3",  "ccss": ["3.OA.C.7"],              "ccssGap": null }
+  ]
+}

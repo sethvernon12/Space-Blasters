@@ -1,0 +1,17 @@
+{
+  "name": "space-blasters-db",
+  "private": true,
+  "type": "module",
+  "description": "Local-only database tooling: migrations, seeds, schema validation and the RLS cross-child leak test. Never targets a real Supabase project (hard guard in scripts/lib.mjs).",
+  "scripts": {
+    "migrate": "node scripts/migrate.mjs",
+    "seed": "node scripts/seed.mjs",
+    "validate": "node scripts/validate-schema.mjs",
+    "validate:static": "node scripts/validate-schema.mjs --static",
+    "test": "node --test scripts/leak-test.mjs"
+  },
+  "devDependencies": {
+    "embedded-postgres": "^17.5.0-beta.15",
+    "pg": "^8.13.1"
+  }
+}

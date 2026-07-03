@@ -57,6 +57,9 @@ jobs:
       - name: schema security posture (RLS forced, zero anon grants)
         working-directory: db
         run: npm run validate
-      - name: cross-child data-leak test
+      - name: cross-child data-leak test + mastery property tests
         working-directory: db
         run: npm test
+      - name: reconciliation (mastery projection rebuildable from the attempt log)
+        working-directory: db
+        run: npm run reconcile

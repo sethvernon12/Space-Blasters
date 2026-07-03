@@ -8,7 +8,8 @@
     "seed": "node scripts/seed.mjs",
     "validate": "node scripts/validate-schema.mjs",
     "validate:static": "node scripts/validate-schema.mjs --static",
-    "test": "node --test scripts/leak-test.mjs"
+    "reconcile": "node scripts/reconcile.mjs",
+    "test": "node --test scripts/leak-test.mjs scripts/mastery-test.mjs"
   },
   "devDependencies": {
     "embedded-postgres": "^17.5.0-beta.15",

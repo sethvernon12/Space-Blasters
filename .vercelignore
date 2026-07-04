@@ -11,4 +11,3 @@ screens/
 .env.example
 .gitignore
 contracts/
-hub/

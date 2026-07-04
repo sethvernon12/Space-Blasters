@@ -90,6 +90,21 @@ export default function SignIn() {
           Use the same pilot name and 4-digit PIN as in Space Blasters. New here? Signing in
           creates your pilot.
         </p>
+
+        {/* "Just play" — no hub session required. This is a real top-level
+            navigation to /play (the separately-built game), so it MUST be a
+            plain <a>, never a react-router <Link>. */}
+        <div className="mt-5 flex items-center gap-3" aria-hidden="true">
+          <span className="h-px flex-1 bg-border" />
+          <span className="text-xs font-medium text-muted-foreground">or</span>
+          <span className="h-px flex-1 bg-border" />
+        </div>
+        <a
+          href="/play"
+          className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full border border-border-strong bg-card text-base font-semibold text-foreground transition-colors hover:bg-surface-muted focus-visible:outline-none"
+        >
+          <span aria-hidden="true">▶</span> Just play Space Blasters
+        </a>
       </Panel>
     </div>
   )

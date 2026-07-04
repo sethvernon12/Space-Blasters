@@ -6058,7 +6058,7 @@ createBufferSource();b.buffer=p;b.connect(zzfxMaster);b.start()};
       for (const row of rows){
         const me = account.name && row.name && row.name.toLowerCase() === account.name.toLowerCase();
         html += '<tr class="'+(me?'me':'')+'"><td class="lb-rank">'+ (medal(row.rank)||row.rank) +'</td>'+
-          '<td>'+ escapeHtml(row.name) + (me?' <span style="color:#7ee8fa">(you)</span>':'') +'</td>'+
+          '<td>'+ (me ? escapeHtml(row.name)+' <span style="color:#7ee8fa">(you)</span>' : 'Pilot') +'</td>'+
           '<td style="color:#9fb6e8;font-size:13px">'+ escapeHtml(row.best_stage||'') +'</td>'+
           '<td class="lb-score">'+ row.best_score +'</td></tr>';
       }

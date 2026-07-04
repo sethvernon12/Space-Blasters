@@ -4,3 +4,9 @@ node_modules/
 screens/
 .env
 db/.pgdata-*/
+.env
+.env.*
+hub/.env
+hub/.env.*
+!*.env.example
+dist/

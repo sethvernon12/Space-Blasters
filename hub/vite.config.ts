@@ -35,6 +35,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: '/',
+    // Publish layout: the hub builds to the repo-root dist/; scripts/copy-game.mjs
+    // then adds dist/play/index.html (a verbatim copy of the root game).
+    build: { outDir: '../dist', emptyOutDir: true },
     plugins: [react(), tailwindcss()],
     resolve: { alias: { '@': path.resolve(here, 'src') } },
     define: {

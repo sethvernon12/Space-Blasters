@@ -1,1 +1,11 @@
-{ "cleanUrls": true }
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/play", "destination": "/play/index.html" },
+    { "source": "/play/(.*)", "destination": "/play/index.html" },
+    { "source": "/((?!play|assets|.*\\.).*)", "destination": "/index.html" }
+  ]
+}

@@ -1,0 +1,25 @@
+// One place to map icon names -> lucide-react components, so every lane renders
+// the same icon set consistently. Icons are decorative by default (aria-hidden);
+// pass a `label` to expose one to assistive tech.
+import {
+  LayoutDashboard, Target, Rocket, TrendingUp, ClipboardList, MessageCircle,
+  Settings, Plus, Minus, CircleDot, X, Divide, HelpCircle, Flame, BookOpen,
+  Volume2, ArrowRight, ArrowLeft, Menu, Sparkles, ExternalLink, Check, LogOut,
+  GraduationCap, Star, PencilLine, Gamepad2, type LucideProps,
+} from 'lucide-react'
+
+const MAP = {
+  LayoutDashboard, Target, Rocket, TrendingUp, ClipboardList, MessageCircle,
+  Settings, plus: Plus, minus: Minus, 'circle-dot': CircleDot, x: X,
+  divide: Divide, 'help-circle': HelpCircle, Flame, BookOpen, Volume2,
+  ArrowRight, ArrowLeft, Menu, Sparkles, ExternalLink, Check, LogOut,
+  GraduationCap, Star, PencilLine, Gamepad2,
+} as const
+
+export type IconName = keyof typeof MAP
+
+export function Icon({ name, label, ...props }: { name: IconName; label?: string } & LucideProps) {
+  const C = MAP[name]
+  if (!C) return null
+  return <C aria-hidden={label ? undefined : true} aria-label={label} {...props} />
+}

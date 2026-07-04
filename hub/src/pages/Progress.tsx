@@ -1,70 +1,71 @@
+import { Panel } from '@/components/Panel'
+import { StrandGlyph } from '@/components/StrandGlyph'
+import { ProgressRing } from '@/components/ProgressRing'
 import { Badge } from '@/components/ui/badge'
-import { SKILLS, SKILL_GROUPS } from '@/data/skills'
+import { Progress as ProgressBar } from '@/components/ui/progress'
+import { SKILLS, SKILL_GROUPS, skillsInGroup } from '@/data/skills'
 import type { Skill, SkillGroup } from '@/data/skills'
 
-function StarIcon() {
-  return (
-    <svg
-      width="28"
-      height="28"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinejoin="round"
-      className="shrink-0 text-hud/50"
-      aria-hidden="true"
-    >
-      <path d="M12 2.5l2.94 5.96 6.58.96-4.76 4.64 1.12 6.55L12 17.52l-5.88 3.09 1.12-6.55L2.48 9.42l6.58-.96L12 2.5z" />
-    </svg>
-  )
-}
+// Honest empty state: every one of the 23 skills reads "Not started". No
+// percentages, no mastery, nothing fabricated — the ring is empty at 0.
 
-function SkillCard({ skill }: { skill: Skill }) {
+function SkillRow({ skill }: { skill: Skill }) {
   return (
-    <li className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
-      <StarIcon />
-      <span className="flex-1 text-sm text-[#dfe9ff]">{skill.label}</span>
-      <Badge variant="outline" className="border-border text-hud">
-        Not started
-      </Badge>
+    <li className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted px-4 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium text-foreground">{skill.label}</span>
+        <Badge variant="outline" className="shrink-0 border-border text-muted-foreground">
+          Not started
+        </Badge>
+      </div>
+      <ProgressBar value={0} aria-label={`${skill.label}: not started`} />
     </li>
   )
 }
 
-function GroupSection({ group }: { group: SkillGroup }) {
-  const skills = SKILLS.filter((s) => s.group === group).sort(
-    (a, b) => a.position - b.position,
-  )
+function StrandPanel({ group }: { group: SkillGroup }) {
+  const skills = skillsInGroup(group)
   return (
-    <section className="relative border-l border-dotted border-hud/25 pl-5">
-      <span
-        aria-hidden="true"
-        className="absolute -left-[3px] top-1 size-[5px] rounded-full bg-hud/40"
-      />
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.18em] text-hud">
-        {group}
-      </h2>
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    <Panel className="flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <StrandGlyph group={group} />
+        <div>
+          <h2 className="text-base font-semibold text-foreground">{group}</h2>
+          <p className="text-sm text-muted-foreground">
+            {skills.length} {skills.length === 1 ? 'skill' : 'skills'}
+          </p>
+        </div>
+      </div>
+      <ul className="flex flex-col gap-3">
         {skills.map((skill) => (
-          <SkillCard key={skill.id} skill={skill} />
+          <SkillRow key={skill.id} skill={skill} />
         ))}
       </ul>
-    </section>
+    </Panel>
   )
 }
 
 export default function Progress() {
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold text-[#dfe9ff]">My Progress</h1>
-      <p className="mt-1 text-sm text-hud">
-        Progress starts filling in once your practice is being recorded (coming
-        soon).
+    <div className="mx-auto w-full max-w-5xl">
+      <h1 className="text-2xl font-bold text-foreground sm:text-3xl">My Progress</h1>
+      <p className="mt-1 text-muted-foreground">
+        Progress fills in once your practice is being recorded (coming soon).
       </p>
-      <div className="mt-8 flex flex-col gap-10">
+
+      <Panel className="mt-6 flex flex-col items-center gap-4 sm:flex-row sm:gap-6">
+        <ProgressRing value={0} label="Overall: not started" />
+        <div>
+          <p className="text-lg font-semibold text-foreground">0 of {SKILLS.length} skills started</p>
+          <p className="text-sm text-muted-foreground">
+            Every skill below is waiting for its first mission.
+          </p>
+        </div>
+      </Panel>
+
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {SKILL_GROUPS.map((group) => (
-          <GroupSection key={group} group={group} />
+          <StrandPanel key={group} group={group} />
         ))}
       </div>
     </div>

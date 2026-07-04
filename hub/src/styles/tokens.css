@@ -1,0 +1,66 @@
+/* ============================================================================
+   Smarter Games — "Veritas Academy" light theme tokens.
+   A deliberate bright inverse of the game's dark palette; the shared gold
+   accent + rounded geometry keep hub and game one world. All pairings meet
+   WCAG AA. muted-soft is only ever used at >=16px or bold.
+   ========================================================================= */
+:root {
+  /* surfaces */
+  --background: #F7F8FB;
+  --card: #FFFFFF;
+  --surface-muted: #F1F4F9;
+  --border: #E6E9F0;
+  --border-strong: #D3D9E4;
+
+  /* text */
+  --foreground: #1B2333;
+  --muted-foreground: #5B6478;
+  --muted-soft: #8A93A6;
+
+  /* brand */
+  --primary: #3B6FE0;
+  --primary-foreground: #FFFFFF;
+  --primary-soft: #E7EEFD;
+
+  /* accents */
+  --accent-gold: #E4922B;
+  --gold-soft: #FCF0DC;
+  --warning-text: #C9830E;
+  --success: #2FA872;
+  --green-soft: #E1F4EC;
+  --accent-purple: #7A5AF0;
+  --purple-soft: #EEEAFD;
+
+  /* strand accents (always paired with an icon + label, never color-only) */
+  --strand-addition: #3B6FE0;
+  --strand-subtraction: #7A5AF0;
+  --strand-number-bonds: #0FA3B1;
+  --strand-multiplication: #E4922B;
+  --strand-division: #2FA872;
+  --strand-missing-number: #8A63D2;
+
+  /* feedback (danger = errors only, never "wrong math") */
+  --danger: #D14343;
+
+  /* focus ring */
+  --ring: rgba(59, 111, 224, 0.45);
+
+  /* radii */
+  --radius: 20px;      /* cards */
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --radius-full: 9999px;
+
+  /* elevation */
+  --shadow-card: 0 1px 2px rgba(20, 28, 48, 0.04), 0 6px 16px rgba(20, 28, 48, 0.06);
+
+  /* typography */
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-reading: 'Lexend Variable', var(--font-sans);
+}
+
+/* Lexend reading mode (Settings toggle) — dyslexia-friendly body face. */
+:root[data-reading-font='lexend'] {
+  --font-sans: 'Lexend Variable', ui-sans-serif, system-ui, sans-serif;
+}

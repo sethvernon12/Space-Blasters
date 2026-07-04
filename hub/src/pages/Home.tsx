@@ -1,58 +1,28 @@
-import { Tile } from '../components/Tile'
-import { GAME_URL } from '../lib/config'
-import { useAuth } from '../lib/auth'
+import { Greeting } from '@/components/home/Greeting'
+import { VerseCard } from '@/components/home/VerseCard'
+import { TodaysFocus } from '@/components/home/TodaysFocus'
+import { ProgressSummary } from '@/components/home/ProgressSummary'
+import { QuickActions } from '@/components/home/QuickActions'
+import { AssignmentsPreview } from '@/components/home/AssignmentsPreview'
 
+// The Command Center home. Mostly layout: a responsive grid of six honest
+// cards on a near-white background. Single column on mobile; a tasteful
+// two-column arrangement at lg where it helps readability.
 export default function Home() {
-  const { account } = useAuth()
-
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8">
-      <header>
-        <h1 className="text-2xl font-bold text-[#dfe9ff] sm:text-3xl">
-          Ready to fly, {account?.name ?? 'pilot'}?
-        </h1>
-        <p className="mt-1 text-sm text-hud">Pick your next mission.</p>
-      </header>
+    <div className="flex flex-col gap-5 py-2 sm:gap-6">
+      <Greeting />
 
-      <div className="mt-6">
-        <Tile
-          big
-          accent="primary"
-          icon="🚀"
-          title="Play Space Blasters"
-          description="Blast math problems — say the answer!"
-          href={GAME_URL}
-          ariaLabel="Play Space Blasters — opens the game"
-        />
+      <div className="grid grid-cols-1 gap-5 sm:gap-6 lg:grid-cols-2">
+        <VerseCard />
+        <TodaysFocus />
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Tile
-          accent="cyan"
-          icon="⭐"
-          title="My Progress"
-          description="Your 23 skills, ready to light up."
-          to="/progress"
-          ariaLabel="My Progress"
-        />
-        <Tile
-          accent="gold"
-          icon="📋"
-          title="My Assignments"
-          description="Work your parent sets for you."
-          to="/assignments"
-          badge="Coming soon"
-          ariaLabel="My Assignments — coming soon"
-        />
-        <Tile
-          accent="mint"
-          icon="✏️"
-          title="Practice Math"
-          description="Quick practice outside the game."
-          to="/practice"
-          badge="Coming soon"
-          ariaLabel="Practice Math — coming soon"
-        />
+      <ProgressSummary />
+
+      <div className="grid grid-cols-1 gap-5 sm:gap-6 lg:grid-cols-2">
+        <QuickActions />
+        <AssignmentsPreview />
       </div>
     </div>
   )

@@ -1,10 +1,12 @@
+// The 23 math skills, VERBATIM from the game curriculum / DEV taxonomy — never
+// invented here. `id` matches skills.id in the database (the game's STAGES key).
 export type SkillGroup =
   | 'Addition'
   | 'Subtraction'
   | 'Number Bonds'
-  | 'Missing Number'
   | 'Multiplication'
   | 'Division'
+  | 'Missing Number'
 
 export interface Skill {
   position: number
@@ -39,11 +41,42 @@ export const SKILLS: Skill[] = [
   { position: 22, id: 'mixMD', label: 'Mixed × and ÷', group: 'Multiplication' },
 ]
 
+// The six strands, in the order the product presents them.
 export const SKILL_GROUPS: SkillGroup[] = [
   'Addition',
   'Subtraction',
   'Number Bonds',
-  'Missing Number',
   'Multiplication',
   'Division',
+  'Missing Number',
 ]
+
+// Per-strand presentation. Color is ALWAYS paired with `icon` + the strand
+// label, never used as the only signal. `iconName` maps to a lucide-react icon
+// so consumers render it without importing all of lucide here.
+export type StrandIcon =
+  | 'plus'
+  | 'minus'
+  | 'circle-dot'
+  | 'x'
+  | 'divide'
+  | 'help-circle'
+
+export interface StrandMeta {
+  color: string        // css var reference (var(--strand-*)) for AA-safe accents
+  softBg: string       // faint tinted background
+  iconName: StrandIcon
+}
+
+export const STRAND_META: Record<SkillGroup, StrandMeta> = {
+  Addition: { color: 'var(--strand-addition)', softBg: 'var(--primary-soft)', iconName: 'plus' },
+  Subtraction: { color: 'var(--strand-subtraction)', softBg: 'var(--purple-soft)', iconName: 'minus' },
+  'Number Bonds': { color: 'var(--strand-number-bonds)', softBg: '#E0F5F7', iconName: 'circle-dot' },
+  Multiplication: { color: 'var(--strand-multiplication)', softBg: 'var(--gold-soft)', iconName: 'x' },
+  Division: { color: 'var(--strand-division)', softBg: 'var(--green-soft)', iconName: 'divide' },
+  'Missing Number': { color: 'var(--strand-missing-number)', softBg: '#EEE8FA', iconName: 'help-circle' },
+}
+
+export function skillsInGroup(group: SkillGroup): Skill[] {
+  return SKILLS.filter((s) => s.group === group).sort((a, b) => a.position - b.position)
+}

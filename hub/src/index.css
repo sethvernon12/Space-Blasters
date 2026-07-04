@@ -1,118 +1,89 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/lexend";
+@import "./styles/tokens.css";
 
-/* ============================================================================
-   Smarter Games Hub — design tokens.
-   The palette IS the game's palette (root index.html), so hub + game read as
-   one world: deep-navy space, warm orange/gold actions, cyan information.
-   Type: the game's rounded system stack — no webfonts (fast, offline-kind).
-   ========================================================================= */
-
+/* Map the design tokens into Tailwind's theme so utilities like bg-card,
+   text-muted-foreground, border-border, text-primary, rounded-2xl resolve to
+   the Veritas light palette. */
 @theme inline {
-  --font-sans: ui-rounded, "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
-  --font-heading: var(--font-sans);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
   --color-background: var(--background);
-  /* game-world extras */
-  --color-gold: #ffd36e;
-  --color-gold-hover: #ffae3c;
-  --color-cyan: #7ee8fa;
-  --color-cyan-deep: #67e8f9;
-  --color-mint: #86efac;
-  --color-rose: #fda4af;
-  --color-blaster: #ff5252;
-  --color-hud: #9fb6e8;
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-}
-
-:root {
-  --radius: 1rem;
-  --background: #05040f;
-  --foreground: #dfe9ff;
-  --card: rgba(20, 28, 60, 0.92);
-  --card-foreground: #dfe9ff;
-  --popover: #0d1434;
-  --popover-foreground: #dfe9ff;
-  --primary: #ff8e3c;                 /* warm orange — the game's action color */
-  --primary-foreground: #2a1204;      /* AA on orange */
-  --secondary: #7ee8fa;               /* cyan — info */
-  --secondary-foreground: #04262e;
-  --muted: rgba(159, 182, 232, 0.12);
-  --muted-foreground: #9fb6e8;
-  --accent: #ffd36e;                  /* gold */
-  --accent-foreground: #2a1d04;
-  --destructive: #ff5252;
-  --destructive-foreground: #2a0404;
-  --border: rgba(126, 232, 250, 0.22);
-  --input: rgba(159, 182, 232, 0.3);
-  --ring: #67e8f9;
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--border-strong);
+  --color-ring: var(--ring);
+  --color-muted: var(--surface-muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted-soft: var(--muted-soft);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--surface-muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-accent: var(--gold-soft);
+  --color-accent-foreground: var(--warning-text);
+  --color-gold: var(--accent-gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-warning-text: var(--warning-text);
+  --color-success: var(--success);
+  --color-green-soft: var(--green-soft);
+  --color-purple: var(--accent-purple);
+  --color-purple-soft: var(--purple-soft);
+  --color-destructive: var(--danger);
+  --color-danger: var(--danger);
+  /* strand accents */
+  --color-strand-addition: var(--strand-addition);
+  --color-strand-subtraction: var(--strand-subtraction);
+  --color-strand-number-bonds: var(--strand-number-bonds);
+  --color-strand-multiplication: var(--strand-multiplication);
+  --color-strand-division: var(--strand-division);
+  --color-strand-missing-number: var(--strand-missing-number);
+  /* radii */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
+  /* elevation */
+  --shadow-card: var(--shadow-card);
 }
 
 @layer base {
-  * { @apply border-border outline-ring/60; }
-  html { color-scheme: dark; }
+  * { @apply border-border; }
+  html { color-scheme: light; }
   body {
-    @apply text-foreground font-sans antialiased;
-    /* the game's sky: deep-navy radial #141238 → #08061c → #03020a */
-    background:
-      radial-gradient(ellipse at 50% 18%, #141238 0%, #08061c 55%, #03020a 100%)
-      fixed #05040f;
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
     min-height: 100dvh;
   }
-  :focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; border-radius: 6px; }
+  h1, h2, h3, h4 { text-wrap: balance; }
+  /* visible keyboard focus everywhere */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--ring);
+    border-radius: 8px;
+  }
 }
 
-/* ---- twinkling star field (ambient; fully disabled for reduced motion) ---- */
-.starfield {
-  position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  background-image:
-    radial-gradient(1.5px 1.5px at 12% 22%, rgba(223,233,255,.9) 50%, transparent 51%),
-    radial-gradient(1px 1px at 32% 68%, rgba(126,232,250,.8) 50%, transparent 51%),
-    radial-gradient(1.5px 1.5px at 51% 12%, rgba(223,233,255,.7) 50%, transparent 51%),
-    radial-gradient(1px 1px at 66% 46%, rgba(255,211,110,.7) 50%, transparent 51%),
-    radial-gradient(1.5px 1.5px at 78% 76%, rgba(223,233,255,.8) 50%, transparent 51%),
-    radial-gradient(1px 1px at 88% 28%, rgba(126,232,250,.7) 50%, transparent 51%),
-    radial-gradient(1px 1px at 22% 88%, rgba(223,233,255,.6) 50%, transparent 51%),
-    radial-gradient(1.5px 1.5px at 94% 60%, rgba(255,216,240,.6) 50%, transparent 51%);
-  animation: twinkle 5.5s ease-in-out infinite alternate;
-}
-@keyframes twinkle { from { opacity: .55; } to { opacity: 1; } }
+@utility shadow-card { box-shadow: var(--shadow-card); }
 
-/* the game's gradient title treatment (SPACE BLASTERS wordmark language) */
-.wordmark {
-  background: linear-gradient(90deg, #67e8f9 0%, #a78bfa 45%, #f0abfc 75%, #ffd36e 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
+/* Reading mode swaps the whole app to Lexend (set on <html data-reading-font>). */
+:root[data-reading-font='lexend'] body { font-family: 'Lexend Variable', ui-sans-serif, system-ui, sans-serif; }
 
 @media (prefers-reduced-motion: reduce) {
-  .starfield { animation: none; opacity: .8; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

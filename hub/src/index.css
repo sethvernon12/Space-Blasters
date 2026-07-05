@@ -1,0 +1,89 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/lexend";
+@import "./styles/tokens.css";
+
+/* Map the design tokens into Tailwind's theme so utilities like bg-card,
+   text-muted-foreground, border-border, text-primary, rounded-2xl resolve to
+   the Veritas light palette. */
+@theme inline {
+  --font-sans: var(--font-sans);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--border-strong);
+  --color-ring: var(--ring);
+  --color-muted: var(--surface-muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted-soft: var(--muted-soft);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--surface-muted);
+  --color-secondary-foreground: var(--foreground);
+  --color-accent: var(--gold-soft);
+  --color-accent-foreground: var(--warning-text);
+  --color-gold: var(--accent-gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-warning-text: var(--warning-text);
+  --color-success: var(--success);
+  --color-green-soft: var(--green-soft);
+  --color-purple: var(--accent-purple);
+  --color-purple-soft: var(--purple-soft);
+  --color-destructive: var(--danger);
+  --color-danger: var(--danger);
+  /* strand accents */
+  --color-strand-addition: var(--strand-addition);
+  --color-strand-subtraction: var(--strand-subtraction);
+  --color-strand-number-bonds: var(--strand-number-bonds);
+  --color-strand-multiplication: var(--strand-multiplication);
+  --color-strand-division: var(--strand-division);
+  --color-strand-missing-number: var(--strand-missing-number);
+  /* radii */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius);
+  --radius-2xl: var(--radius);
+  /* elevation */
+  --shadow-card: var(--shadow-card);
+}
+
+@layer base {
+  * { @apply border-border; }
+  html { color-scheme: light; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    min-height: 100dvh;
+  }
+  h1, h2, h3, h4 { text-wrap: balance; }
+  /* visible keyboard focus everywhere */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--ring);
+    border-radius: 8px;
+  }
+}
+
+@utility shadow-card { box-shadow: var(--shadow-card); }
+
+/* Reading mode swaps the whole app to Lexend (set on <html data-reading-font>). */
+:root[data-reading-font='lexend'] body { font-family: 'Lexend Variable', ui-sans-serif, system-ui, sans-serif; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

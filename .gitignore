@@ -3,6 +3,11 @@ node_modules/
 .vercel
 screens/
 .env
+.env.*
+!*.env.example
 db/.pgdata-*/
+dist/
+hub/.env
+hub/.env.*
 workspace/config.local.js
 workspace/screens/

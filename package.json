@@ -1,0 +1,8 @@
+{
+  "name": "space-blasters",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "npm --prefix hub install && npm --prefix hub run build && node scripts/copy-game.mjs"
+  }
+}

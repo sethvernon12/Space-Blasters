@@ -9,7 +9,8 @@
     "validate": "node scripts/validate-schema.mjs",
     "validate:static": "node scripts/validate-schema.mjs --static",
     "reconcile": "node scripts/reconcile.mjs",
-    "test": "node --test scripts/leak-test.mjs scripts/mastery-test.mjs"
+    "test": "node --test scripts/leak-test.mjs scripts/mastery-test.mjs",
+    "test:m3": "node scripts/family-b1-test.mjs && node scripts/family-b2-test.mjs && node scripts/family-b3-matrix.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

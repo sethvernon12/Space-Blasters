@@ -102,7 +102,8 @@ test('contract guard: an invalid event is rejected before any network write', as
   assert.deepEqual({ ok: res.ok, error: res.error }, { ok: false, error: 'invalid_event' })
 })
 
-test('seams present and honest: getMastery / getNextActivity return empties (no fabricated data)', async () => {
-  assert.deepEqual(await getMastery(cfg, { childId: CHILD_ID }), { skills: [] })
-  assert.equal(await getNextActivity(cfg, { childId: CHILD_ID }), null)
+test('read seams honor RLS: an ANON transport (no JWT) reads nothing (no fabricated data)', async () => {
+  const gm = await getMastery(cfg, CHILD_ID)   // cfg has no accessToken -> anon -> RLS returns nothing
+  assert.deepEqual(gm.skills, [], 'anon sees no per-child mastery')
+  assert.equal(await getNextActivity(cfg, CHILD_ID), null, 'no data -> no recommendation')
 })

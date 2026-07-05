@@ -10,6 +10,8 @@
 // append-only source of truth). Column map in docs/DATA_MAP.md.
 // ============================================================================
 import { SKILL_TAGS, INPUT_METHODS } from './learning.mjs'
+import { masteryOf } from './mastery.mjs'
+import { nextBestActivity } from './activity.mjs'
 
 export const CAPTURE_CONTRACT_VERSION = 1
 
@@ -132,23 +134,61 @@ export async function recordAttempt(transport, credentials, eventOrEvents, meta 
   return res.json()
 }
 
-/**
- * getMastery — read the derived per-(child, skill) mastery projection. SEAM
- * stub for Milestone 1: reads are RLS-gated on auth.uid(), which arrives with
- * parent/child auth (a later milestone). Until then this returns an empty,
- * honest projection rather than inventing data.
- * @returns {Promise<{skills: Array}>}
- */
-export async function getMastery(/* transport, childRef */) {
-  return { skills: [] }
+// Authed GET against PostgREST — RLS scopes the result to what auth.uid() may see.
+// `transport` = { restUrl, anonKey, accessToken }. Without an accessToken the
+// request is anon (RLS returns nothing for child-scoped tables).
+async function authedGet(transport, query) {
+  const res = await fetch(`${transport.restUrl}/${query}`, {
+    headers: {
+      apikey: transport.anonKey,
+      Authorization: `Bearer ${transport.accessToken || transport.anonKey}`,
+    },
+  })
+  if (!res.ok) return { ok: false, rows: [] }
+  return { ok: true, rows: await res.json() }
 }
 
 /**
- * getNextActivity — the recommended next practice item. SEAM stub for Milestone
- * 1: no recommendation engine is wired yet, so it honestly returns null (callers
- * render an empty "start practicing" state). The name is the seam.
- * @returns {Promise<null>}
+ * getMastery — the derived per-(child, skill) mastery projection, read through
+ * an AUTHENTICATED client (anon key + the user's JWT). RLS (mastery_select =
+ * can_view_child) scopes it: owner + granted tutor get real numbers; anyone else
+ * gets []. Invents nothing — it returns exactly the rows RLS permits.
+ * @param {{restUrl:string, anonKey:string, accessToken?:string}} transport
+ * @param {string} childId
+ * @returns {Promise<{childId:string, model:string, skills:Array}>}
  */
-export async function getNextActivity(/* transport, childRef */) {
-  return null
+export async function getMastery(transport, childId) {
+  const query = `child_skill_mastery?child_id=eq.${childId}` +
+    '&select=skill_id,alpha,beta,attempts_count,correct_count,last_seen_at,last_correct_at,' +
+    'skills(display_name,category,subject,position)'
+  const { rows } = await authedGet(transport, query)
+  const skills = rows.map((r) => ({
+    skillKey: r.skill_id,
+    displayName: r.skills?.display_name ?? r.skill_id,
+    subject: r.skills?.subject ?? 'math',
+    category: r.skills?.category ?? null,
+    position: r.skills?.position ?? null,
+    mastery: masteryOf(Number(r.alpha), Number(r.beta)).mastery,
+    attempts: r.attempts_count,
+    correct: r.correct_count,
+    lastSeen: r.last_seen_at,
+  })).sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
+  return { childId, model: 'mastery-v1', skills }
+}
+
+/**
+ * getNextActivity — the recommended next practice item, derived from the child's
+ * REAL mastery (via getMastery, so it is RLS-scoped and invents nothing). Focus =
+ * the least-mastered practiced skill; if all are mastered, the furthest one.
+ * Returns null when there is nothing recorded yet.
+ * @returns {Promise<null|{action:string, skillKey:string, icon:string, reason:string, focusSkill:string, displayName:string}>}
+ */
+export async function getNextActivity(transport, childId) {
+  const { skills } = await getMastery(transport, childId)
+  if (!skills.length) return null
+  const focus = skills.find((s) => s.mastery < 0.85) || skills[skills.length - 1]
+  const nba = nextBestActivity({
+    skillKey: focus.skillKey, mastery: focus.mastery, attempts: focus.attempts, correct: focus.correct,
+  })
+  return { ...nba, focusSkill: focus.skillKey, displayName: focus.displayName }
 }

@@ -33,7 +33,17 @@ const FILES = [
   'supabase/local/002_capture_seed.sql',       // fresh, aligned data-only seed
 ]
 
-export async function applySchema(dbUrl) {
+// Milestone-3 schema (accounts era): no name/PIN capture seed — the family is
+// seeded in JS after GoTrue users are minted. 0003 pending re-review before DEV.
+export const FILES_M3 = [
+  'supabase/local/001_players_stub.sql',
+  'supabase/migrations/0001_mastery.sql',
+  'supabase/local/003_skills_seed.sql',        // taxonomy (reference data)
+  'supabase/migrations/0002_attempt_context.sql',
+  'supabase/migrations/0003_accounts.sql',
+]
+
+export async function applySchema(dbUrl, files = FILES) {
   const c = new Client({ connectionString: dbUrl })
   await c.connect()
   try {
@@ -42,7 +52,7 @@ export async function applySchema(dbUrl) {
       create schema public;
       grant usage on schema public to anon, authenticated, service_role;
       grant all on schema public to postgres, service_role;`)
-    for (const f of FILES) {
+    for (const f of files) {
       await c.query(fs.readFileSync(path.join(root, f), 'utf8'))
     }
     // PostgREST caches the schema — tell it to reload so the new RPC is callable

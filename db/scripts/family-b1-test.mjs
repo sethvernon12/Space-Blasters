@@ -30,7 +30,7 @@ const CID = { brielle: A.children.brielle.childId, theo: A.children.theo.childId
 console.log('A. minted sessions resolve to the right auth.uid:')
 const S = {}
 for (const [who, email] of [
-  ['maya', A.parent.email], ['rose', A.tutor.email],
+  ['maya', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email],
   ['brielle', A.children.brielle.email], ['theo', A.children.theo.email],
   ['dana', B.parent.email], ['wren', B.children.wren.email],
 ]) {
@@ -51,6 +51,7 @@ const expect = [
   ['brielle (child)', S.brielle, ['Brielle']],
   ['theo (child)', S.theo, ['Theo']],
   ['rose (tutor→Brielle)', S.rose, ['Brielle']],
+  ['obs (observer→Brielle)', S.obs, ['Brielle']],
   ['dana (parent B)', S.dana, ['Wren']],
   ['wren (child)', S.wren, ['Wren']],
 ]
@@ -111,6 +112,90 @@ async function assign(client, childId, uid) {
 {
   const { data, error } = await assign(S.maya.client, CID.theo, uids.maya)
   !error && data?.length === 1 ? ok('maya (parent) assigns for her own Theo → created') : bad(`maya→Theo assign failed: ${error?.message}`)
+}
+
+// ---- E. teaching_artifacts: tutor teaching WRITE-power, scoped + truthful ----
+console.log('E. teaching_artifacts write authorization (can_write_child):')
+async function artifact(client, childId, uid, role, kind, extra = {}) {
+  return client.from('teaching_artifacts')
+    .insert({ child_id: childId, author_id: uid, author_role: role, kind, subject: 'math', payload: { note: 'from B1' }, ...extra })
+    .select()
+}
+{
+  const kinds = ['grade', 'feedback', 'annotation', 'reteach', 'material']
+  let allOk = true
+  for (const k of kinds) { const { data, error } = await artifact(S.rose.client, CID.brielle, uids.rose, 'tutor', k); if (error || data?.length !== 1) allOk = false }
+  allOk ? ok('rose (tutor) creates grade/feedback/annotation/reteach/material for Brielle → all created') : bad('rose teaching writes for Brielle failed')
+}
+{
+  const { data, error } = await artifact(S.maya.client, CID.brielle, uids.maya, 'parent', 'feedback')
+  !error && data?.length === 1 ? ok('maya (parent) authors feedback for Brielle → created') : bad(`maya feedback: ${error?.message}`)
+}
+{
+  const { data, error } = await artifact(S.rose.client, CID.theo, uids.rose, 'tutor', 'grade')
+  ;(error || !data?.length) ? ok('rose creates artifact for Theo (not granted) → blocked') : bad('rose→Theo artifact should be blocked')
+}
+{
+  const { data, error } = await artifact(S.dana.client, CID.brielle, uids.dana, 'tutor', 'grade')
+  ;(error || !data?.length) ? ok('dana (other family) creates artifact for Brielle → blocked') : bad('dana→Brielle artifact should be blocked')
+}
+{
+  const { data, error } = await artifact(S.obs.client, CID.brielle, uids.obs, 'tutor', 'feedback')
+  ;(error || !data?.length) ? ok('obs (view-only grant, can_write=false) → blocked (reads but cannot write)') : bad('obs write should be blocked')
+}
+{
+  const { data, error } = await artifact(S.rose.client, CID.brielle, uids.rose, 'parent', 'grade') // masquerade
+  ;(error || !data?.length) ? ok('rose claims author_role=parent (masquerade) → blocked (truthful provenance)') : bad('rose parent-masquerade should be blocked')
+}
+
+// ---- F. immutable + supersede-to-revoke (override = new row, never an edit) ----
+console.log('F. teaching_artifacts immutable; override = superseding row:')
+let firstGradeId = null
+{
+  const { data } = await artifact(S.rose.client, CID.brielle, uids.rose, 'tutor', 'grade', { payload: { verdict: 'incorrect' } })
+  firstGradeId = data?.[0]?.id
+  const { data: d2, error } = await artifact(S.rose.client, CID.brielle, uids.rose, 'tutor', 'grade', { payload: { verdict: 'correct' }, supersedes_id: firstGradeId })
+  !error && d2?.length === 1 && firstGradeId ? ok('rose overrides her grade with a SUPERSEDING row → both preserved') : bad('supersede failed')
+}
+{
+  const { data, error } = await S.rose.client.from('teaching_artifacts').update({ payload: { hacked: true } }).eq('id', firstGradeId).select()
+  ;(error || !data?.length) ? ok('UPDATE a teaching_artifact → blocked (immutable)') : bad('update should be blocked')
+}
+{
+  const { data, error } = await S.rose.client.from('teaching_artifacts').delete().eq('id', firstGradeId).select()
+  ;(error || !data?.length) ? ok('DELETE a teaching_artifact → blocked (immutable)') : bad('delete should be blocked')
+}
+
+// ---- G. STILL LOCKED for the tutor: raw attempts / mastery / consent ----
+console.log('G. tutor cannot touch attempts / mastery / consent:')
+{
+  const { data, error } = await S.rose.client.from('attempts').update({ result: 'correct' }).eq('child_id', CID.brielle).select()
+  ;(error || !data?.length) ? ok('rose UPDATE attempts → blocked (append-only, no policy)') : bad('rose attempts update should be blocked')
+}
+{
+  const { error } = await S.rose.client.from('child_skill_mastery')
+    .insert({ child_id: CID.brielle, skill_id: 'add5', alpha: 99, beta: 1 }).select()
+  error ? ok('rose INSERT mastery → blocked (no client write path)') : bad('rose mastery insert should be blocked')
+}
+{
+  const { error } = await S.rose.client.from('consent_ledger')
+    .insert({ parent_id: uids.rose, child_id: CID.brielle, action: 'grant', method: 'other_vpc', policy_version: 'x' }).select()
+  error ? ok('rose INSERT consent_ledger → blocked (service-only)') : bad('rose consent insert should be blocked')
+}
+
+// ---- H. every tutor grant logged as a parental-disclosure consent event ----
+console.log('H. tutor grants logged as disclosure events:')
+{
+  const { data, error } = await S.maya.client.from('consent_ledger').select('action, child_id, detail').eq('action', 'disclosure')
+  if (error) { bad(`maya consent read: ${error.message}`) }
+  else {
+    const grantees = data.map((r) => r.detail?.grantee_id)
+    const hasRose = data.some((r) => r.detail?.grantee_id === uids.rose && r.child_id === CID.brielle)
+    const hasObs = grantees.includes(uids.obs)
+    hasRose && hasObs && data.length === 2
+      ? ok(`maya sees 2 disclosure events (tutor Rose + observer) for her family`)
+      : bad(`disclosure events wrong: ${JSON.stringify(data.map((r) => ({ g: r.detail?.grantee_id, c: r.child_id })))}`)
+  }
 }
 
 console.log(fails ? `\nB1: ${fails} FAIL` : '\nB1: ALL PASS')

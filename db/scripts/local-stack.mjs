@@ -41,6 +41,7 @@ export const FILES_M3 = [
   'supabase/local/003_skills_seed.sql',        // taxonomy (reference data)
   'supabase/migrations/0002_attempt_context.sql',
   'supabase/migrations/0003_accounts.sql',
+  'supabase/migrations/0004_teaching.sql',
 ]
 
 export async function applySchema(dbUrl, files = FILES) {

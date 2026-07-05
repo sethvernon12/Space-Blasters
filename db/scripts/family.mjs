@@ -33,6 +33,7 @@ export const FAMILY = {
   alpha: {
     parent: { email: 'maya@local.test', role: 'parent' },
     tutor: { email: 'rose@local.test', role: 'tutor' },
+    observer: { email: 'obs@local.test', role: 'observer' }, // view-only grant (can_write=false)
     children: {
       brielle: { childId: 'b1e11e00-0000-4000-8000-000000000001', nickname: 'Brielle', gradeBand: '1', email: 'brielle@local.test' },
       theo: { childId: 'b1e11e00-0000-4000-8000-000000000002', nickname: 'Theo', gradeBand: 'K', email: 'theo@local.test' },
@@ -78,6 +79,7 @@ export async function setupFamily(cfg) {
   const uids = {}
   uids.maya = await mintUser(admin, FAMILY.alpha.parent.email)
   uids.rose = await mintUser(admin, FAMILY.alpha.tutor.email)
+  uids.obs = await mintUser(admin, FAMILY.alpha.observer.email)
   uids.brielle = await mintUser(admin, FAMILY.alpha.children.brielle.email)
   uids.theo = await mintUser(admin, FAMILY.alpha.children.theo.email)
   uids.dana = await mintUser(admin, FAMILY.beta.parent.email)
@@ -103,10 +105,17 @@ export async function setupFamily(cfg) {
     await seedChild(A.children.theo.childId, uids.maya, uids.theo, A.children.theo.nickname, A.children.theo.gradeBand)
     await seedChild(B.children.wren.childId, uids.dana, uids.wren, B.children.wren.nickname, B.children.wren.gradeBand)
 
-    // Grandma Rose is a tutor for BRIELLE ONLY (not Theo, not Wren)
+    // Grandma Rose is a TEACHING tutor for BRIELLE ONLY (not Theo, not Wren)
     await c.query(
-      `insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`,
+      `insert into public.tutor_grants (tutor_id, child_id, granted_by, active, role, can_write)
+       values ($1,$2,$3,true,'tutor',true)`,
       [uids.rose, A.children.brielle.childId, uids.maya])
+    // A VIEW-ONLY observer for Brielle (can_write=false) — proves can_write_child
+    // excludes read-only grants. (Each grant also logs a disclosure consent event.)
+    await c.query(
+      `insert into public.tutor_grants (tutor_id, child_id, granted_by, active, role, can_write)
+       values ($1,$2,$3,true,'observer',false)`,
+      [uids.obs, A.children.brielle.childId, uids.maya])
   } finally {
     await c.end()
   }

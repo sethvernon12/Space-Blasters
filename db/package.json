@@ -12,6 +12,7 @@
     "test": "node --test scripts/leak-test.mjs scripts/mastery-test.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "embedded-postgres": "^17.5.0-beta.15",
     "pg": "^8.13.1"
   }

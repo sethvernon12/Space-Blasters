@@ -4,3 +4,5 @@ node_modules/
 screens/
 .env
 db/.pgdata-*/
+workspace/config.local.js
+workspace/screens/

@@ -82,9 +82,17 @@ console.log('consent revocation:')
   // revoke Brielle's consent (service-side, DEV-only) and confirm the tutor loses access
   const { Client } = (await import('pg')).default
   const c = new Client({ connectionString: cfg.dbUrl }); await c.connect()
-  try { await c.query(`update public.children set consent_id = null where id = $1`, [CID.Brielle]) } finally { await c.end() }
+  let saved
+  try {
+    saved = (await c.query(`select consent_id from public.children where id=$1`, [CID.Brielle])).rows[0].consent_id
+    await c.query(`update public.children set consent_id = null where id = $1`, [CID.Brielle])
+  } finally { await c.end() }
   const roseStillSees = await seesRows('rose', 'child_skill_mastery', 'child_id', CID.Brielle)
   !roseStillSees ? ok('after consent revoked, granted tutor can no longer read child data') : bad('consent revocation did NOT cut access')
+  // restore so DEV is left seeded + consented + populated for the browser smoke
+  const c2 = new Client({ connectionString: cfg.dbUrl }); await c2.connect()
+  try { await c2.query(`update public.children set consent_id = $1 where id = $2`, [saved, CID.Brielle]) } finally { await c2.end() }
+  ok('consent restored — DEV left seeded + consented (a pending grade proposal remains for the cockpit smoke)')
 }
 
 console.log(fails ? `\n=== DEV VERIFY: ${fails} FAIL ===` : '\n=== DEV VERIFY: ALL PASS (DEV isolation + smoke green) ===')

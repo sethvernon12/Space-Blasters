@@ -90,16 +90,36 @@ console.log('revocation:')
   r.allow === false ? ok('revoked tutor → authorize denies') : bad(`revoked rose still allowed: ${JSON.stringify(r)}`)
 }
 
-// ---- 6. consent is a PRECONDITION — blocks even the parent (restore after) ----
-console.log('consent precondition:')
+// ---- 6. assignments UPDATE can't forge provenance (0006 #6) ----
+console.log('assignments provenance:')
+{
+  const ins = (await S.seth.client.from('assignments').insert({ child_id: CID.Brielle, assigned_by: uids.seth, skill_id: 'add5', title: 'prov' }).select()).data
+  const aid = ins?.[0]?.id
+  const forge = await S.seth.client.from('assignments').update({ assigned_by: uids.rose }).eq('id', aid).select()
+  ;(forge.error || !forge.data?.length) ? ok('cannot forge assigned_by via assignments UPDATE') : bad('assigned_by forge NOT blocked')
+  const status = await S.seth.client.from('assignments').update({ status: 'done' }).eq('id', aid).select()
+  !status.error && status.data?.length === 1 ? ok('legit status update still allowed') : bad(`status update failed: ${status.error?.message}`)
+}
+
+// ---- 7. consent is a PRECONDITION — blocks reads AND the gate; no oracle (restore after) ----
+console.log('consent precondition (0006 #2 + #4):')
 {
   const c = new Client({ connectionString: cfg.dbUrl }); await c.connect()
   const saved = (await c.query(`select consent_id from public.children where id=$1`, [CID.Brielle])).rows[0].consent_id
   await c.query(`update public.children set consent_id=null where id=$1`, [CID.Brielle])
+  // the gate blocks even the parent
   const r = await az('seth', CID.Brielle)
   r.allow === false && r.reason === 'no_consent' ? ok('missing consent BLOCKS even the parent (no_consent)') : bad(`consent gate: ${JSON.stringify(r)}`)
   const pd = (await S.seth.client.rpc('child_context_pack', { p_child_id: CID.Brielle })).data
   pd?.denied && pd.reason === 'no_consent' ? ok('context pack denied when consent missing') : bad(`pack no-consent: ${JSON.stringify(pd)}`)
+  // ACC-03 extended to RAW READS: even the parent reads nothing with consent missing
+  const mast = (await S.seth.client.from('child_skill_mastery').select('skill_id').eq('child_id', CID.Brielle)).data
+  const att = (await S.seth.client.from('attempts').select('id').eq('child_id', CID.Brielle)).data
+  ;(!mast?.length && !att?.length) ? ok('missing consent BLOCKS raw mastery + attempts reads (even the parent)') : bad(`consent-on-reads leak: mastery=${mast?.length} attempts=${att?.length}`)
+  // no consent-state oracle: an UNSCOPED caller gets not_authorized, never no_consent
+  const ot = await az('theo', CID.Brielle)
+  const od = await az('dana', CID.Brielle)
+  ot.reason === 'not_authorized' && od.reason === 'not_authorized' ? ok('unscoped callers get not_authorized (no consent-state oracle)') : bad(`oracle leak: theo=${ot.reason} dana=${od.reason}`)
   await c.query(`update public.children set consent_id=$1 where id=$2`, [saved, CID.Brielle])
   await c.end()
 }

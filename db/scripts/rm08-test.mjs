@@ -70,6 +70,15 @@ console.log('AI-4 (solver arbitrates numeric correctness):')
   r?.verdict === 'incorrect' ? ok('AI proposed "correct" on a wrong answer → RECORDED verdict = solver\'s "incorrect"') : bad(`solver-arbiter: recorded verdict=${r?.verdict}`)
 }
 
+// ---- H3 (0011): a client-forged correct_answer is IGNORED (recompute from operands)
+console.log('H3 (forged correct_answer ignored):')
+{
+  const subF = (await S.brielle.client.rpc('record_submission', { p_child_id: CID.Brielle, p_skill_id: 'add5', p_client_submission_id: uuid(), p_problem_dna: { operator: '+', operands: [2, 3], correct_answer: 4 }, p_submitted_answer: 4, p_explanation: 'x' })).data.submission_id
+  const propF = (await S.rose.client.rpc('propose_grade', { p_submission_id: subF, p_verdict: 'correct', p_score: 100, p_feedback: 'ok', p_model: 'x', p_prompt_version: 'x', p_misconception_id: null })).data
+  const r = (await S.rose.client.rpc('approve_grade', { p_proposal_id: propF.proposal_id })).data
+  r?.verdict === 'incorrect' ? ok('forged correct_answer=4 for 2+3 → solver recomputes 5 → RECORDED incorrect (no self-certify)') : bad(`H3: verdict=${r?.verdict}`)
+}
+
 // ---- override changes feedback only; moderate() on the child-facing string ----
 console.log('override (feedback only) + moderate:')
 {
@@ -106,6 +115,25 @@ console.log('DATA-4 (reconcile):')
   const after = (await q(`select graded_count, correct_count from public.child_skill_assessment where child_id=$1 and skill_id='add5'`, [CID.Brielle])).rows[0]
   before && after && before.graded_count === after.graded_count && before.correct_count === after.correct_count
     ? ok(`replay rebuild matches stored projection (graded=${after.graded_count}, correct=${after.correct_count})`) : bad(`reconcile: ${JSON.stringify({ before, after })}`)
+}
+
+// ---- M5 (0011): approval is idempotent per submission (no double-count) ----
+console.log('M5 (idempotent approval):')
+{
+  const before = (await q(`select graded_count from public.child_skill_assessment where child_id=$1 and skill_id='add5'`, [CID.Brielle])).rows[0]?.graded_count ?? 0
+  const dup = (await S.rose.client.rpc('approve_grade', { p_proposal_id: prop1.proposal_id })).data // prop1 was already approved
+  const after = (await q(`select graded_count from public.child_skill_assessment where child_id=$1 and skill_id='add5'`, [CID.Brielle])).rows[0]?.graded_count ?? 0
+  dup?.error === 'already_recorded' && before === after ? ok('re-approving a recorded grade → already_recorded, projection unchanged') : bad(`M5: dup=${JSON.stringify(dup)} ${before}->${after}`)
+}
+
+// ---- M6 (0011): rebuild_assessment requires active consent (blocks after revocation)
+console.log('M6 (rebuild requires consent):')
+{
+  const saved = (await q(`select consent_id from public.children where id=$1`, [CID.Brielle])).rows[0].consent_id
+  await q(`update public.children set consent_id=null where id=$1`, [CID.Brielle])
+  const r = (await S.seth.client.rpc('rebuild_assessment', { p_child_id: CID.Brielle })).data
+  r?.error === 'no_consent' ? ok('rebuild_assessment blocked when consent missing/revoked (no re-materialization)') : bad(`M6: ${JSON.stringify(r)}`)
+  await q(`update public.children set consent_id=$1 where id=$2`, [saved, CID.Brielle])
 }
 
 // ---- Isolation + revocation ----

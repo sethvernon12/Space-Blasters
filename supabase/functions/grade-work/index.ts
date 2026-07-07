@@ -34,10 +34,11 @@ Deno.serve(async (req) => {
   if (!auth) return json({ error: 'unauthenticated' }, 401)
   const body = await req.json().catch(() => ({}))
   const submissionId = body?.submissionId
-  if (!submissionId) return json({ error: 'bad_request' }, 400)
+  // L9: validate it is a UUID before interpolating into the PostgREST query
+  if (!submissionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(submissionId)) return json({ error: 'bad_request' }, 400)
 
   // 1. read the submission through RLS (name-free: no name column exists)
-  const subRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${submissionId}&select=child_id,skill_id,submitted_answer,problem_dna,skills(display_name)`,
+  const subRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?id=eq.${encodeURIComponent(submissionId)}&select=child_id,skill_id,submitted_answer,problem_dna,skills(display_name)`,
     { headers: { apikey: ANON, Authorization: auth } })
   const sub = subRes.ok ? (await subRes.json())[0] : null
   if (!sub) return json({ denied: true, reason: 'not_visible' }, 403)

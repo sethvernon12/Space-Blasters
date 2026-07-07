@@ -18,6 +18,8 @@ const CID = { Brielle: A.children.brielle.childId, Theo: A.children.theo.childId
 
 const db = new Client({ connectionString: cfg.dbUrl })
 const q = (sql, p = []) => db.query(sql, p)
+// the drain is worker/service-only (revoked from authenticated, 0011 M4) — run it via the service pg connection
+const drain = async () => (await q('select public.drain_derivations() as r')).rows[0].r
 
 console.log('Setup: families + derivation rules + a class group with a schedule…')
 const uids = await setupFamily(cfg)
@@ -50,7 +52,7 @@ const jr = (await S.seth.client.rpc('join_group', { p_group_id: mathClass, p_mem
 }
 
 // ---- drain ----
-const d1 = (await S.seth.client.rpc('drain_derivations')).data
+const d1 = await drain()
 d1?.processed >= 1 ? ok(`drain processed ${d1.processed} item(s)`) : bad(`drain: ${JSON.stringify(d1)}`)
 
 // ---- DER-05: channels + guardian structural co-membership (COM-03) ----
@@ -127,14 +129,14 @@ console.log('DER-11 (fail-closed consent gating):')
   const saved = (await q(`select consent_id from public.children where id=$1`, [CID.Theo])).rows[0].consent_id
   await q(`update public.children set consent_id=null where id=$1`, [CID.Theo])
   await S.seth.client.rpc('join_group', { p_group_id: mathClass, p_member_child_id: CID.Theo, p_member_actor_id: null, p_role: 'member' })
-  await S.seth.client.rpc('drain_derivations')
+  await drain()
   const held = (await q(`select status from public.derivation_outbox where kind='join' and group_id=$1 and member_child_id=$2`, [mathClass, CID.Theo])).rows[0]
   const noChan = (await q(`select count(*)::int n from public.channel_members cm join public.channels c on c.id=cm.channel_id where c.group_id=$1 and cm.member_child_id=$2`, [mathClass, CID.Theo])).rows[0].n
   held?.status === 'held' && noChan === 0 ? ok('non-consented child → outbox HELD, nothing derived (blocks, not skips)') : bad(`consent-hold: status=${held?.status} chan=${noChan}`)
   await q(`update public.children set consent_id=$1 where id=$2`, [saved, CID.Theo])
   // re-enqueue by re-joining, then drain → now completes
   await S.seth.client.rpc('join_group', { p_group_id: mathClass, p_member_child_id: CID.Theo, p_member_actor_id: null, p_role: 'member' })
-  await S.seth.client.rpc('drain_derivations')
+  await drain()
   const nowChan = (await q(`select count(*)::int n from public.channel_members cm join public.channels c on c.id=cm.channel_id where c.group_id=$1 and cm.member_child_id=$2`, [mathClass, CID.Theo])).rows[0].n
   nowChan === 1 ? ok('after consent restored + re-drain, Theo derivation completes') : bad(`post-consent derive: chan=${nowChan}`)
 }
@@ -147,13 +149,13 @@ console.log('DER-12 (idempotent + reversible):')
   const reqBefore = (await q(`select count(*)::int n from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2 and payload->>'status'='assigned'`, [mathClass, CID.Brielle])).rows[0].n
   // re-join Brielle (already a member) + drain → no duplicates
   await S.seth.client.rpc('join_group', { p_group_id: mathClass, p_member_child_id: CID.Brielle, p_member_actor_id: null, p_role: 'member' })
-  await S.seth.client.rpc('drain_derivations')
+  await drain()
   const after = (await q(`select count(*)::int n from public.channel_members where channel_id=$1`, [chanId])).rows[0].n
   const reqAfter = (await q(`select count(*)::int n from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2 and payload->>'status'='assigned'`, [mathClass, CID.Brielle])).rows[0].n
   before === after && reqBefore === reqAfter ? ok(`idempotent: re-drain created no duplicate channel members (${after}) or requirements (${reqAfter})`) : bad(`idempotency: members ${before}->${after}, reqs ${reqBefore}->${reqAfter}`)
   // reversal on leave (compensating, history preserved)
   await S.seth.client.rpc('leave_group', { p_group_id: mathClass, p_member_child_id: CID.Brielle, p_member_actor_id: null })
-  await S.seth.client.rpc('drain_derivations')
+  await drain()
   const childActive = (await q(`select active from public.channel_members where channel_id=$1 and member_child_id=$2`, [chanId, CID.Brielle])).rows[0]
   const cancelled = (await q(`select count(*)::int n from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2 and payload->>'status'='cancelled'`, [mathClass, CID.Brielle])).rows[0].n
   const assignedStill = (await q(`select count(*)::int n from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2 and payload->>'status'='assigned'`, [mathClass, CID.Brielle])).rows[0].n
@@ -177,6 +179,17 @@ console.log('Cross-family isolation (new tables):')
     if (sethN === 0) bad(`${table}: Seth (member) should see Math Class rows but saw 0`)
   }
   leaks === 0 ? ok('Dana (other family) reads 0 rows across groups/memberships/channels/events') : bad(`${leaks} cross-family group-graph leaks`)
+}
+
+// ---- C1 (0011): no bare group-id self-join into a group you don't own ----
+console.log('C1 — group-join requires ownership (no cross-family self-join):')
+{
+  const danaJoin = (await S.dana.client.rpc('join_group', { p_group_id: mathClass, p_member_child_id: CID.Wren, p_member_actor_id: null, p_role: 'member' })).data
+  const sethJoin = (await S.seth.client.rpc('join_group', { p_group_id: betaClass, p_member_child_id: CID.Brielle, p_member_actor_id: null, p_role: 'member' })).data
+  const leaked = (await q(`select count(*)::int n from public.memberships where (group_id=$1 and member_child_id=$2) or (group_id=$3 and member_child_id=$4)`, [mathClass, CID.Wren, betaClass, CID.Brielle])).rows[0].n
+  danaJoin?.error === 'not_authorized' && sethJoin?.error === 'not_authorized' && leaked === 0
+    ? ok('Dana cannot join Wren into Seth\'s class; Seth cannot join Brielle into Dana\'s class; no membership created')
+    : bad(`self-join: dana=${JSON.stringify(danaJoin)} seth=${JSON.stringify(sethJoin)} leaked=${leaked}`)
 }
 
 await db.end()

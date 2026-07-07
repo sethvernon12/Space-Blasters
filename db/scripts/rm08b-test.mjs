@@ -80,6 +80,16 @@ console.log('solver validates at the record boundary:')
   r?.error === 'invalid_items' && delivered === 0 ? ok('a tampered item (wrong answer) is REJECTED at approval — never delivered') : bad(`re-validate: ${JSON.stringify({ r, delivered })}`)
 }
 
+// ---- M7 (0011): every delivered prompt passes the moderation choke point ----
+console.log('M7 (moderation on delivery):')
+{
+  const propM = (await S.rose.client.rpc('propose_assignment', { p_child_id: CID.Brielle, p_skill_id: 'add5', p_difficulty: 'x', p_predicted_p: 0.8, p_items: [{ operator: '+', operands: [2, 3], correct_answer: 5, prompt: 'Solve 2 + 3 — visit http://cheats.example.com' }], p_title: 'modtest', p_model: 'x', p_prompt_version: 'x' })).data
+  const r = (await S.rose.client.rpc('approve_assignment', { p_proposal_id: propM.proposal_id })).data
+  const del = (await q(`select items from public.assignments where id=$1`, [r?.assignment_id])).rows[0]
+  const clean = (del?.items ?? []).every((it) => !/cheats\.example\.com/.test(it.prompt ?? ''))
+  r?.ok && clean ? ok('a link in a delivered prompt is MODERATED out on the authoritative path') : bad(`M7: ${JSON.stringify(del?.items)}`)
+}
+
 // ---- KER-7: generation writes no mastery/consent ----
 console.log('KER-7:')
 {

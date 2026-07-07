@@ -1,0 +1,3 @@
+# The All-Around Athlete Academy — private synthetic-data preview. Do not index.
+User-agent: *
+Disallow: /

@@ -70,9 +70,17 @@ async function mintUser(admin, email) {
   return data.user.id
 }
 
-// Apply the M3 schema, mint all users, seed the two families. Returns uids.
+// Apply the M3 schema (LOCAL: drops + rebuilds public), then seed. Returns uids.
 export async function setupFamily(cfg) {
   await applySchema(cfg.dbUrl, FILES_M3)
+  return seedFamily(cfg)
+}
+
+// Seed the two synthetic families onto an ALREADY-MIGRATED schema (mint users +
+// children/consent/grants) WITHOUT touching the schema. Used by the DEV staging
+// verify, where migrations are applied via the Supabase MCP (never a drop).
+// Assumes a fresh schema (no prior synthetic rows) — to re-seed, reset first.
+export async function seedFamily(cfg) {
   const admin = adminClient(cfg)
 
   // mint users

@@ -1,11 +1,15 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "npm --prefix hub install && npm --prefix hub run build",
   "outputDirectory": "dist",
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/play", "destination": "/play/index.html" },
-    { "source": "/play/(.*)", "destination": "/play/index.html" },
-    { "source": "/((?!play|assets|.*\\.).*)", "destination": "/index.html" }
+    { "source": "/((?!assets|.*\\.).*)", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    }
   ]
 }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import { PreferencesProvider } from './lib/prefs'
 import { SessionProvider } from './lib/session'
+import { StagingGate } from './components/StagingGate'
 import Root from './Root'
 
 // Milestone 3: role-aware family hub. A dev "Sign in as…" switcher (local GoTrue
@@ -11,9 +12,11 @@ import Root from './Root'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <PreferencesProvider>
-      <SessionProvider>
-        <Root />
-      </SessionProvider>
+      <StagingGate>
+        <SessionProvider>
+          <Root />
+        </SessionProvider>
+      </StagingGate>
     </PreferencesProvider>
   </StrictMode>,
 )

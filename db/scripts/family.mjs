@@ -118,6 +118,10 @@ export async function seedFamily(cfg) {
   const c = new Client({ connectionString: cfg.dbUrl })
   await c.connect()
   try {
+    // idempotent re-seed: clear any prior synthetic child data (cascades to all
+    // child-scoped tables). No-op locally (applySchema already dropped public);
+    // on DEV it clears a prior seed so this run starts clean.
+    await c.query('truncate public.children cascade')
     const seedChild = async (childId, parentUid, childUid, nickname, gradeBand) => {
       await c.query(
         `insert into public.children (id, parent_id, auth_user_id, nickname, grade_band) values ($1,$2,$3,$4,$5)`,

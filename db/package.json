@@ -18,7 +18,8 @@
     "test:rm08": "node scripts/rm08-test.mjs",
     "test:rm08-ui": "node scripts/rm08-e2e.mjs",
     "test:rm08b": "node scripts/rm08b-test.mjs",
-    "test:rm08b-ui": "node scripts/rm08b-e2e.mjs"
+    "test:rm08b-ui": "node scripts/rm08b-e2e.mjs",
+    "screens:rm09": "node scripts/rm09-screens.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

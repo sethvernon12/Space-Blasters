@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { DEV_ACCOUNTS, useSession } from '@/lib/session'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
+import { Crest } from '@/components/Crest'
 
 // LOCAL dev "Sign in as…" switcher. Real Google OAuth is deferred to the DEV
 // promotion step (it can't be bot-tested locally).
@@ -14,10 +15,8 @@ export default function DevSignIn() {
     <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-4 py-10">
       <Panel className="w-full max-w-md">
         <div className="flex flex-col items-center text-center">
-          <span className="inline-grid size-12 place-items-center rounded-xl bg-gold-soft text-warning-text">
-            <Icon name="GraduationCap" size={26} />
-          </span>
-          <h1 className="mt-3 text-2xl font-bold text-foreground">Smarter Games</h1>
+          <Crest size={52} />
+          <h1 className="mt-3 text-xl font-black tracking-tight text-foreground">The All-Around Athlete Academy</h1>
           <p className="text-sm text-muted-foreground">Family hub — choose who’s signing in</p>
         </div>
 

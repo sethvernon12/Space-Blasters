@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { useSession } from '@/lib/session'
 import { Icon } from '@/components/Icon'
-import { HUB_NAME } from '@/lib/config'
+import { Crest } from '@/components/Crest'
+import { HUB_MOTTO } from '@/lib/config'
 
 const ROLE_LABEL: Record<string, string> = { parent: 'Parent', child: 'Learner', tutor: 'Tutor' }
 
@@ -11,11 +12,12 @@ export function RoleShell({ role, name, children }: { role: string; name: string
   const { signOut } = useSession()
   return (
     <div className="min-h-dvh bg-background">
-      <header className="sticky top-0 z-20 flex items-center gap-2 border-b border-border bg-card/90 px-4 py-2.5 backdrop-blur-sm">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-gold-soft text-warning-text">
-          <Icon name="GraduationCap" size={18} />
-        </span>
-        <span className="text-base font-bold text-foreground">{HUB_NAME}</span>
+      <header className="sticky top-0 z-20 flex items-center gap-2.5 border-b border-border bg-card/90 px-4 py-2.5 backdrop-blur-sm">
+        <Crest size={30} />
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span className="truncate text-sm font-black tracking-tight text-foreground">All-Around Athlete Academy</span>
+          <span className="hidden text-[11px] font-medium text-muted-foreground sm:block">{HUB_MOTTO}</span>
+        </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="flex flex-col items-end leading-tight">
             <span className="text-sm font-semibold text-foreground">{name}</span>

@@ -1,49 +1,67 @@
 /* ============================================================================
-   Smarter Games — "Veritas Academy" light theme tokens.
-   A deliberate bright inverse of the game's dark palette; the shared gold
-   accent + rounded geometry keep hub and game one world. All pairings meet
-   WCAG AA. muted-soft is only ever used at >=16px or bold.
+   THE ALL-AROUND ATHLETE ACADEMY — "Veritas-light" design tokens.
+   Re-grounded to the game's palette family (EXT-7): deep-navy brand ink +
+   warm gold hero, cyan, mint = success, rose = gentle-wrong — carried onto
+   light surfaces so hub and game (Space Blasters / Smarter Games arcade) read
+   as ONE world. All text/background pairings meet WCAG AA; muted-soft only at
+   >=16px or bold. ("Veritas" is the internal codename for these tokens only.)
+   The single canonical brand-token file; the live single-file game is synced
+   in a later gated step.
    ========================================================================= */
 :root {
-  /* surfaces */
-  --background: #F7F8FB;
+  /* surfaces — light, faintly warm so gold/navy sit naturally */
+  --background: #F6F7FB;
   --card: #FFFFFF;
-  --surface-muted: #F1F4F9;
-  --border: #E6E9F0;
-  --border-strong: #D3D9E4;
+  --surface-muted: #EEF1F7;
+  --border: #E4E8F0;
+  --border-strong: #CFD6E4;
 
-  /* text */
-  --foreground: #1B2333;
-  --muted-foreground: #5B6478;
+  /* text — deep navy: the game's night sky as ink */
+  --foreground: #12203F;
+  --muted-foreground: #566079;
   --muted-soft: #8A93A6;
 
-  /* brand */
-  --primary: #3B6FE0;
+  /* brand — deep navy primary (interactive) + warm gold hero */
+  --primary: #16224A;
   --primary-foreground: #FFFFFF;
-  --primary-soft: #E7EEFD;
+  --primary-soft: #E7ECF7;
 
-  /* accents */
-  --accent-gold: #E4922B;
-  --gold-soft: #FCF0DC;
-  --warning-text: #C9830E;
-  --success: #2FA872;
-  --green-soft: #E1F4EC;
-  --accent-purple: #7A5AF0;
-  --purple-soft: #EEEAFD;
+  /* warm gold (game #ffd36e / #fde68a family) */
+  --accent-gold: #E8A317;        /* readable gold fill */
+  --gold: #FFD36E;               /* the game's warm gold — glows / accents */
+  --gold-soft: #FCEFCF;          /* pale gold surface */
+  --warning-text: #96640F;       /* dark gold for text on light (AA) */
+
+  /* cyan (game #7ee8fa) */
+  --cyan: #14899F;               /* readable cyan text/icon */
+  --cyan-bright: #7EE8FA;        /* the game's cyan — accents/glows */
+  --cyan-soft: #DEF4FA;
+
+  /* success = mint (game #86efac); rose = gentle-wrong (game #fda4af) */
+  --success: #1F9D5B;            /* readable green text */
+  --mint: #86EFAC;               /* the game's mint — bar fills */
+  --green-soft: #E1F6E9;
+  --rose: #FDA4AF;               /* gentle-wrong — NEVER "error" */
+  --rose-soft: #FDE7EA;
+  --rose-ink: #A83651;
+
+  /* AI accent purple (game #c4b5fd family) */
+  --accent-purple: #6D5AE6;
+  --purple-soft: #ECE9FD;
 
   /* strand accents (always paired with an icon + label, never color-only) */
-  --strand-addition: #3B6FE0;
-  --strand-subtraction: #7A5AF0;
-  --strand-number-bonds: #0FA3B1;
-  --strand-multiplication: #E4922B;
-  --strand-division: #2FA872;
-  --strand-missing-number: #8A63D2;
+  --strand-addition: #16224A;
+  --strand-subtraction: #6D5AE6;
+  --strand-number-bonds: #14899F;
+  --strand-multiplication: #E8A317;
+  --strand-division: #1F9D5B;
+  --strand-missing-number: #7A63D2;
 
-  /* feedback (danger = errors only, never "wrong math") */
-  --danger: #D14343;
+  /* feedback (danger = true errors only, never "wrong math") */
+  --danger: #C8384B;
 
   /* focus ring */
-  --ring: rgba(59, 111, 224, 0.45);
+  --ring: rgba(22, 34, 74, 0.42);
 
   /* radii */
   --radius: 20px;      /* cards */
@@ -53,7 +71,7 @@
   --radius-full: 9999px;
 
   /* elevation */
-  --shadow-card: 0 1px 2px rgba(20, 28, 48, 0.04), 0 6px 16px rgba(20, 28, 48, 0.06);
+  --shadow-card: 0 1px 2px rgba(18, 32, 63, 0.05), 0 8px 22px rgba(18, 32, 63, 0.07);
 
   /* typography */
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;

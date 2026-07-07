@@ -1,32 +1,45 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
 import { ProgressRing } from '@/components/ProgressRing'
 import { MasteryBar } from '@/components/MasteryBar'
-import { getChildSummary, getMastery, type SkillMastery } from '@/lib/api'
+import { approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import type { Profile } from '@/lib/session'
 
-const FEATURE_AI_SUMMARY = true // flag-gated; routes through the child-summary Edge Function
+const FEATURE_AI = true // flag-gated; routes through the kernel (child-summary + approvals)
 
+// The parent cockpit: one seat over ALL their children — approve, then see
+// progress. Every card is a query over the primitives; every button calls an
+// existing kernel function.
 export default function ParentHome({ profile }: { profile: Profile }) {
   const [byChild, setByChild] = useState<Record<string, SkillMastery[]>>({})
   const [summaries, setSummaries] = useState<Record<string, string | null>>({})
+  const [grades, setGrades] = useState<PendingGrade[]>([])
+  const [assigns, setAssigns] = useState<PendingAssignment[]>([])
+  const [flash, setFlash] = useState<string | null>(null)
+  const childName = (id: string) => profile.children.find((c) => c.id === id)?.nickname ?? 'your child'
 
-  useEffect(() => {
-    let alive = true
-    ;(async () => {
-      const m: Record<string, SkillMastery[]> = {}
-      for (const c of profile.children) m[c.id] = await getMastery(c.id)
-      if (alive) setByChild(m)
-      if (FEATURE_AI_SUMMARY) {
-        for (const c of profile.children) {
-          const s = await getChildSummary(c.id)
-          if (alive) setSummaries((prev) => ({ ...prev, [c.id]: s?.summary ?? null }))
-        }
-      }
-    })()
-    return () => { alive = false }
+  const load = useCallback(async () => {
+    const m: Record<string, SkillMastery[]> = {}
+    for (const c of profile.children) m[c.id] = await getMastery(c.id)
+    setByChild(m)
+    if (FEATURE_AI) {
+      for (const c of profile.children) { const s = await getChildSummary(c.id); setSummaries((p) => ({ ...p, [c.id]: s?.summary ?? null })) }
+      setGrades(await getPendingGrades())
+      setAssigns(await getPendingAssignments())
+    }
   }, [profile.children])
+  useEffect(() => { void load() }, [load])
+
+  async function okGrade(id: string, override?: string) {
+    const { error } = await approveGrade(id, override)
+    setFlash(error ? `Could not record: ${error.message}` : 'Grade recorded ✓'); void load()
+  }
+  async function okAssign(id: string) {
+    const { error } = await approveAssignment(id)
+    setFlash(error ? `Could not deliver: ${error.message}` : 'Assignment delivered ✓'); void load()
+  }
+  const pendingCount = grades.length + assigns.length
 
   return (
     <div className="flex flex-col gap-5">
@@ -34,6 +47,46 @@ export default function ParentHome({ profile }: { profile: Profile }) {
         <h1 className="text-2xl font-bold text-foreground">Your children</h1>
         <p className="text-sm text-muted-foreground">Signed in as {profile.displayName}</p>
       </div>
+      {flash && <p className="rounded-xl bg-green-soft px-4 py-2 text-sm font-medium" style={{ color: 'var(--success)' }}>{flash}</p>}
+
+      {/* Cockpit instrument: everything awaiting the parent, across all children */}
+      {FEATURE_AI && pendingCount > 0 && (
+        <Panel data-testid="parent-approvals" style={{ background: 'var(--gold-soft)' }}>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-warning-text"><Icon name="Sparkles" size={16} /></span>
+            <span className="text-xs font-bold uppercase tracking-wide text-warning-text">Awaiting your approval</span>
+            <span className="ml-auto rounded-full bg-card px-2 py-0.5 text-xs font-bold text-warning-text">{pendingCount}</span>
+          </div>
+          <ul className="flex flex-col gap-2.5">
+            {grades.map((p) => (
+              <li key={p.id} className="rounded-xl border border-border bg-card p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-sm font-bold text-foreground">{childName(p.child_id)}</span>
+                  <span className="rounded-full px-2 py-0.5 text-xs font-semibold" style={{ background: p.payload.verdict === 'correct' ? 'var(--green-soft)' : 'var(--surface-muted)', color: p.payload.verdict === 'correct' ? 'var(--success)' : 'var(--muted-foreground)' }}>grade · {p.payload.verdict}</span>
+                </div>
+                <p className="text-sm text-foreground">{p.payload.feedback}</p>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" onClick={() => okGrade(p.id)} className="min-h-9 flex-1 rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground">Approve</button>
+                  <button type="button" onClick={() => okGrade(p.id, 'Let’s review this one together — great effort!')} className="min-h-9 flex-1 rounded-full border border-border text-sm font-semibold text-foreground hover:bg-surface-muted">Override</button>
+                </div>
+              </li>
+            ))}
+            {assigns.map((p) => (
+              <li key={p.id} className="rounded-xl border border-border bg-card p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-sm font-bold text-foreground">{childName(p.child_id)}</span>
+                  <span className="text-sm text-muted-foreground">{p.payload.title}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">assignment · ~{Math.round((p.payload.predicted_p ?? 0) * 100)}%</span>
+                </div>
+                <ul className="mb-2 flex flex-wrap gap-1.5">
+                  {(p.payload.items ?? []).map((it, i) => <li key={i} className="rounded-lg bg-surface-muted px-2 py-1 text-xs text-foreground">{it.prompt}</li>)}
+                </ul>
+                <button type="button" onClick={() => okAssign(p.id)} className="min-h-9 w-full rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground">Deliver to student</button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
 
       {profile.children.map((c) => {
         const skills = byChild[c.id] ?? []
@@ -51,7 +104,7 @@ export default function ParentHome({ profile }: { profile: Profile }) {
               </div>
             </div>
 
-            {FEATURE_AI_SUMMARY && summary && (
+            {FEATURE_AI && summary && (
               <div className="rounded-2xl border border-border p-4" style={{ background: 'var(--purple-soft)' }} data-testid="ai-summary">
                 <div className="mb-1 flex items-center gap-2">
                   <span style={{ color: 'var(--accent-purple)' }}><Icon name="Sparkles" size={16} /></span>

@@ -13,10 +13,12 @@ export function RoleShell({ role, name, children }: { role: string; name: string
   return (
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-20 flex items-center gap-2.5 border-b border-border bg-card/90 px-4 py-2.5 backdrop-blur-sm">
-        <Crest size={30} />
-        <div className="flex min-w-0 flex-col leading-tight">
-          <span className="truncate text-sm font-black tracking-tight text-foreground">All-Around Athlete Academy</span>
-          <span className="hidden text-[11px] font-medium text-muted-foreground sm:block">{HUB_MOTTO}</span>
+        <Crest size={30} className="shrink-0" />
+        <div className="flex min-w-0 flex-col leading-[1.06]">
+          {/* mobile: short two-line stack; sm+: full wordmark on one line */}
+          <span className="text-[13px] font-black tracking-tight text-foreground sm:hidden">All-Around<br />Athlete Academy</span>
+          <span className="hidden text-sm font-black tracking-tight text-foreground sm:inline">All-Around Athlete Academy</span>
+          <span className="mt-0.5 hidden text-[11px] font-medium text-muted-foreground sm:block">{HUB_MOTTO}</span>
         </div>
         <div className="ml-auto flex items-center gap-3">
           <span className="flex flex-col items-end leading-tight">

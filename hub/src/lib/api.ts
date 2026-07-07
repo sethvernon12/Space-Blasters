@@ -90,3 +90,15 @@ export async function listArtifacts(childId: string): Promise<Artifact[]> {
   const { data } = await supabase.from('teaching_artifacts').select('id,kind,author_role,payload,created_at').eq('child_id', childId).order('created_at', { ascending: false })
   return (data ?? []) as Artifact[]
 }
+
+export interface ChildSummary { summary: string; meta?: { provider: string; model: string; promptVersion: string } }
+
+// The ONLY AI boundary — routes through the child-summary Edge Function (the
+// single model door: authorize -> context pack -> gateway(mock) -> verify ->
+// moderate -> audit). Server-side only; the client just invokes it with its JWT.
+// Returns null on deny/error (no fabricated fallback).
+export async function getChildSummary(childId: string): Promise<ChildSummary | null> {
+  const { data, error } = await supabase.functions.invoke('child-summary', { body: { childId } })
+  if (error || !data || (data as { denied?: boolean }).denied) return null
+  return data as ChildSummary
+}

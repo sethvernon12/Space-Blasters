@@ -22,12 +22,12 @@ const cfg = m3Config()
 const A = FAMILY.alpha, B = FAMILY.beta
 const CID = { Brielle: A.children.brielle.childId, Theo: A.children.theo.childId, Wren: B.children.wren.childId }
 const KIDS = ['Brielle', 'Theo', 'Wren']
-const ACTORS = ['maya', 'brielle', 'theo', 'rose', 'obs', 'dana', 'wren']
-const FAM = { maya: 'A', brielle: 'A', theo: 'A', rose: 'A', obs: 'A', dana: 'B', wren: 'B' }
+const ACTORS = ['seth', 'brielle', 'theo', 'rose', 'obs', 'dana', 'wren']
+const FAM = { seth: 'A', brielle: 'A', theo: 'A', rose: 'A', obs: 'A', dana: 'B', wren: 'B' }
 const KIDFAM = { Brielle: 'A', Theo: 'A', Wren: 'B' }
 
 // relationship truth (mutable grants, for revocation)
-const parentKids = { maya: ['Brielle', 'Theo'], dana: ['Wren'] }
+const parentKids = { seth: ['Brielle', 'Theo'], dana: ['Wren'] }
 const childSelf = { brielle: 'Brielle', theo: 'Theo', wren: 'Wren' }
 let viewGrant = { rose: ['Brielle'], obs: ['Brielle'] }
 let writeGrant = { rose: ['Brielle'] }
@@ -40,7 +40,7 @@ console.log('Setting up two families + populating every table…')
 const uids = await setupFamily(cfg)
 const S = {}
 for (const a of ACTORS) {
-  const email = a === 'maya' ? A.parent.email : a === 'rose' ? A.tutor.email : a === 'obs' ? A.observer.email
+  const email = a === 'seth' ? A.parent.email : a === 'rose' ? A.tutor.email : a === 'obs' ? A.observer.email
     : a === 'brielle' ? A.children.brielle.email : a === 'theo' ? A.children.theo.email
     : a === 'dana' ? B.parent.email : B.children.wren.email
   S[a] = await signInAs(cfg, email)
@@ -59,15 +59,17 @@ for (const [a, k] of [['brielle', 'Brielle'], ['theo', 'Theo'], ['wren', 'Wren']
       `insert into public.child_skill_misconception (child_id, skill_id, misconception_id, evidence_count, active) values ($1,'add5','adds-instead',2,true)`, [CID[k]])
   } finally { await c.end() }
 }
-await S.maya.client.from('assignments').insert([
-  { child_id: CID.Brielle, assigned_by: uids.maya, skill_id: 'add5', title: 'a' },
-  { child_id: CID.Theo, assigned_by: uids.maya, skill_id: 'add5', title: 'a' }])
+await S.seth.client.from('assignments').insert([
+  { child_id: CID.Brielle, assigned_by: uids.seth, skill_id: 'add5', title: 'a' },
+  { child_id: CID.Theo, assigned_by: uids.seth, skill_id: 'add5', title: 'a' }])
 await S.dana.client.from('assignments').insert({ child_id: CID.Wren, assigned_by: uids.dana, skill_id: 'add5', title: 'a' })
-await S.maya.client.from('teaching_artifacts').insert([
-  { child_id: CID.Brielle, author_id: uids.maya, author_role: 'parent', kind: 'feedback', payload: {} },
-  { child_id: CID.Theo, author_id: uids.maya, author_role: 'parent', kind: 'feedback', payload: {} }])
-await S.dana.client.from('teaching_artifacts').insert({ child_id: CID.Wren, author_id: uids.dana, author_role: 'parent', kind: 'feedback', payload: {} })
-await S.rose.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.rose, author_role: 'tutor', kind: 'grade', payload: {} })
+// visibility_scope: 'family' so every can_view_child viewer sees them (the read
+// matrix tests can_view_child; default-private scoping is proven in secure-yard-test).
+await S.seth.client.from('teaching_artifacts').insert([
+  { child_id: CID.Brielle, author_id: uids.seth, author_role: 'parent', kind: 'feedback', payload: {}, visibility_scope: 'family' },
+  { child_id: CID.Theo, author_id: uids.seth, author_role: 'parent', kind: 'feedback', payload: {}, visibility_scope: 'family' }])
+await S.dana.client.from('teaching_artifacts').insert({ child_id: CID.Wren, author_id: uids.dana, author_role: 'parent', kind: 'feedback', payload: {}, visibility_scope: 'family' })
+await S.rose.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.rose, author_role: 'tutor', kind: 'grade', payload: {}, visibility_scope: 'family' })
 
 // ---- probes (real client path) ----
 async function seesRows(a, table, col, cid) {
@@ -128,8 +130,8 @@ await runWriteMatrices('①')
 console.log('bespoke-policy tables:')
 await matrix('READ consent_ledger (parent sees only own child rows)', canParent, (a, k) => seesRows(a, 'consent_ledger', 'child_id', CID[k]))
 {
-  // tutor_grants for Brielle: visible to granting parent (maya) + grantees (rose, obs); nobody else
-  const seeGrants = { maya: ['Brielle'], rose: ['Brielle'], obs: ['Brielle'] }
+  // tutor_grants for Brielle: visible to granting parent (seth) + grantees (rose, obs); nobody else
+  const seeGrants = { seth: ['Brielle'], rose: ['Brielle'], obs: ['Brielle'] }
   await matrix('READ tutor_grants (grantor + grantees only)',
     (a, k) => (seeGrants[a] || []).includes(k),
     (a, k) => seesRows(a, 'tutor_grants', 'child_id', CID[k]))
@@ -141,20 +143,20 @@ async function blocked(desc, fn) {
   try { const { data, error } = await fn(); (error || !data?.length) ? ok(desc) : bad(`${desc} — NOT blocked`) }
   catch { ok(desc) }
 }
-const M = S.maya.client, cidB = CID.Brielle
+const M = S.seth.client, cidB = CID.Brielle
 await blocked('INSERT attempts direct → blocked (RPC-only)', () => M.from('attempts').insert({ child_id: cidB, skill_id: 'add5', client_attempt_id: uuid(), result: 'correct' }).select())
 await blocked('INSERT sessions direct → blocked', () => M.from('sessions').insert({ child_id: cidB, client_session_id: uuid() }).select())
 await blocked('INSERT child_skill_mastery → blocked', () => M.from('child_skill_mastery').insert({ child_id: cidB, skill_id: 'add5', alpha: 9, beta: 1 }).select())
 await blocked('INSERT child_skill_misconception → blocked', () => M.from('child_skill_misconception').insert({ child_id: cidB, skill_id: 'add5', misconception_id: 'x' }).select())
-await blocked('INSERT consent_ledger → blocked (service-only)', () => M.from('consent_ledger').insert({ parent_id: uids.maya, child_id: cidB, action: 'grant', method: 'other_vpc', policy_version: 'x' }).select())
+await blocked('INSERT consent_ledger → blocked (service-only)', () => M.from('consent_ledger').insert({ parent_id: uids.seth, child_id: cidB, action: 'grant', method: 'other_vpc', policy_version: 'x' }).select())
 await blocked('UPDATE attempts → blocked (append-only)', () => M.from('attempts').update({ result: 'incorrect' }).eq('child_id', cidB).select())
 await blocked('DELETE attempts → blocked (append-only)', () => M.from('attempts').delete().eq('child_id', cidB).select())
 await blocked('UPDATE teaching_artifacts → blocked (immutable)', () => M.from('teaching_artifacts').update({ payload: { x: 1 } }).eq('child_id', cidB).select())
 await blocked('DELETE consent_ledger → blocked (immutable)', () => M.from('consent_ledger').delete().eq('child_id', cidB).select())
 
 // ---- REVOCATION: cut Rose's grant, re-run EVERY matrix (rose→Brielle now all false) ----
-console.log('REVOCATION — Maya revokes Rose; re-run every matrix:')
-await S.maya.client.from('tutor_grants').update({ active: false }).eq('tutor_id', uids.rose).eq('child_id', CID.Brielle)
+console.log('REVOCATION — Seth revokes Rose; re-run every matrix:')
+await S.seth.client.from('tutor_grants').update({ active: false }).eq('tutor_id', uids.rose).eq('child_id', CID.Brielle)
 viewGrant = { obs: ['Brielle'] }   // rose removed; observer remains
 writeGrant = {}                    // rose was the only can_write grant
 await runReadMatrices('②(post-revoke)')

@@ -11,7 +11,9 @@
     "reconcile": "node scripts/reconcile.mjs",
     "test": "node --test scripts/leak-test.mjs scripts/mastery-test.mjs",
     "test:m3": "node scripts/family-b1-test.mjs && node scripts/family-b2-test.mjs && node scripts/family-b3-matrix.mjs",
-    "test:m3-ui": "node scripts/hub-b5-e2e.mjs"
+    "test:m3-ui": "node scripts/hub-b5-e2e.mjs",
+    "test:secure-yard": "node scripts/secure-yard-test.mjs",
+    "test:secure-yard-ui": "node scripts/secure-yard-e2e.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

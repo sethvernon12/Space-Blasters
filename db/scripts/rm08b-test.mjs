@@ -7,7 +7,7 @@
 // Run (stack up): eval "$(supabase status -o env)"; node db/scripts/rm08b-test.mjs
 // ============================================================================
 import pgpkg from 'pg'
-import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
 import { buildBatch } from '../../contracts/capture.mjs'
 
 const { Client } = pgpkg
@@ -25,7 +25,8 @@ console.log('Setup + Brielle has some mastery…')
 const uids = await setupFamily(cfg)
 await db.connect()
 const S = {}
-for (const [w, e] of [['seth', A.parent.email], ['brielle', A.children.brielle.email], ['rose', A.tutor.email], ['dana', B.parent.email]]) S[w] = await signInAs(cfg, e)
+for (const [w, e] of [['seth', A.parent.email], ['rose', A.tutor.email], ['dana', B.parent.email]]) S[w] = await signInAs(cfg, e)
+S.brielle = await mintChildSession(cfg, S.seth.client, CID.Brielle) // child enters via the real mint
 {
   const ses = uuid()
   await S.brielle.client.rpc('record_attempts_authed', { p_child_id: CID.Brielle, p_batch: buildBatch(Array.from({ length: 8 }, (_, i) => ({ clientAttemptId: uuid(), clientSessionId: ses, stageIndex: 0, skill: 'addition', result: i === 5 ? 'incorrect' : 'correct', problemText: '2 + 3', correctAnswer: 5, chosenAnswer: 5, responseMs: 3000, inputMethod: 'tap', asrConfidence: null, runTimeS: i, level: 1, mode: 'journey', context: {} }))) })

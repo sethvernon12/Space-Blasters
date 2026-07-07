@@ -60,6 +60,26 @@ export async function signInAs(cfg, email, password = PW) {
   return { client: c, uid: data.user.id, session: data.session }
 }
 
+// Enter a child through the REAL mint path (never a password): the PARENT proves
+// ownership via authorize_and_record_mint (rate-limited + audited), then a GoTrue
+// one-time link is exchanged SERVER-SIDE into the child's session. This mirrors
+// the start-child-session Edge Function exactly (that HTTP wrapper is exercised +
+// attacked in the mint self-test). Returns a client carrying the child session.
+export async function mintChildSession(cfg, parentClient, childId) {
+  const { data: az, error: azErr } = await parentClient.rpc('authorize_and_record_mint', { p_child_id: childId })
+  if (azErr || !az?.ok) throw new Error(`mint authz failed for ${childId}: ${azErr?.message || az?.error}`)
+  const admin = adminClient(cfg)
+  const { data: u } = await admin.auth.admin.getUserById(az.auth_user_id)
+  const email = u?.user?.email
+  if (!email) throw new Error(`no handle for child ${childId}`)
+  const { data: link, error: linkErr } = await admin.auth.admin.generateLink({ type: 'magiclink', email })
+  if (linkErr || !link?.properties?.hashed_token) throw new Error(`generateLink failed: ${linkErr?.message}`)
+  const exchanger = createClient(cfg.apiUrl, cfg.anonKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const { data: sess, error: vErr } = await exchanger.auth.verifyOtp({ token_hash: link.properties.hashed_token, type: 'magiclink' })
+  if (vErr || !sess?.session) throw new Error(`verifyOtp failed: ${vErr?.message}`)
+  return { client: exchanger, uid: az.auth_user_id, session: sess.session }
+}
+
 async function mintUser(admin, email) {
   // delete-then-create so each run gets a deterministic, fresh user
   const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })

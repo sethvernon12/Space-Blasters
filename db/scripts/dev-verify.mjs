@@ -12,7 +12,7 @@
 // Run: node db/scripts/dev-verify.mjs
 // ============================================================================
 import { devConfig } from './dev-config.mjs'
-import { seedFamily, signInAs, FAMILY } from './family.mjs'
+import { seedFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
 import { buildBatch } from '../../contracts/capture.mjs'
 
 const cfg = devConfig()                         // <-- refuses anything but the DEV ref
@@ -27,8 +27,10 @@ const mkEvent = () => ({ clientAttemptId: uuid(), clientSessionId: uuid(), stage
 console.log(`DEV staging verify → ${cfg.apiUrl} (synthetic families only)`)
 const uids = await seedFamily(cfg)
 const S = {}
-for (const [w, e] of [['seth', A.parent.email], ['brielle', A.children.brielle.email], ['theo', A.children.theo.email],
-  ['rose', A.tutor.email], ['obs', A.observer.email], ['dana', B.parent.email], ['wren', B.children.wren.email]]) S[w] = await signInAs(cfg, e)
+for (const [w, e] of [['seth', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email], ['dana', B.parent.email]]) S[w] = await signInAs(cfg, e)
+S.brielle = await mintChildSession(cfg, S.seth.client, CID.Brielle) // children enter via the real mint
+S.theo = await mintChildSession(cfg, S.seth.client, CID.Theo)
+S.wren = await mintChildSession(cfg, S.dana.client, CID.Wren)
 const tok = (a) => S[a].session.access_token
 
 // populate one attempt per child (sessions + attempts + mastery)

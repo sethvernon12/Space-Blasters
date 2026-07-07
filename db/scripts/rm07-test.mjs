@@ -6,7 +6,7 @@
 // Run (stack up): eval "$(supabase status -o env)"; node db/scripts/rm07-test.mjs
 // ============================================================================
 import pgpkg from 'pg'
-import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
 
 const { Client } = pgpkg
 let fails = 0
@@ -31,7 +31,8 @@ await q(`insert into public.derivation_rules (purpose, role, rule_kind, spec) va
   ('team','member','channel', jsonb_build_object('channel_name','Team'))`)
 
 const S = {}
-for (const [w, e] of [['seth', A.parent.email], ['dana', B.parent.email], ['brielle', A.children.brielle.email], ['rose', A.tutor.email]]) S[w] = await signInAs(cfg, e)
+for (const [w, e] of [['seth', A.parent.email], ['dana', B.parent.email], ['rose', A.tutor.email]]) S[w] = await signInAs(cfg, e)
+S.brielle = await mintChildSession(cfg, S.seth.client, CID.Brielle) // child enters via the real mint
 
 // Seth creates a class (family Alpha); Dana creates one (family Beta, isolation foil)
 const mathClass = (await S.seth.client.from('groups').insert({ purpose: 'class', name: 'Math Class', season: '2026', created_by: uids.seth }).select()).data?.[0]?.id

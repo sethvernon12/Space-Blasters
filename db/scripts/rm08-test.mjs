@@ -7,7 +7,7 @@
 // Run (stack up): eval "$(supabase status -o env)"; node db/scripts/rm08-test.mjs
 // ============================================================================
 import pgpkg from 'pg'
-import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
 
 const { Client } = pgpkg
 let fails = 0
@@ -24,7 +24,8 @@ console.log('Setup + sign-in…')
 const uids = await setupFamily(cfg)
 await db.connect()
 const S = {}
-for (const [w, e] of [['seth', A.parent.email], ['brielle', A.children.brielle.email], ['rose', A.tutor.email], ['dana', B.parent.email]]) S[w] = await signInAs(cfg, e)
+for (const [w, e] of [['seth', A.parent.email], ['rose', A.tutor.email], ['dana', B.parent.email]]) S[w] = await signInAs(cfg, e)
+S.brielle = await mintChildSession(cfg, S.seth.client, CID.Brielle) // child enters via the real mint
 
 const submit = async (client, answer, expl = 'I worked it out') =>
   (await client.rpc('record_submission', { p_child_id: CID.Brielle, p_skill_id: 'add5', p_client_submission_id: uuid(), p_problem_dna: { operator: '+', operands: [2, 3], correct_answer: 5 }, p_submitted_answer: answer, p_explanation: expl })).data

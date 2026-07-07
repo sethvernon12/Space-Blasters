@@ -9,7 +9,7 @@
 // Run (stack up): eval "$(supabase status -o env)"; node db/scripts/family-b3-matrix.mjs
 // ============================================================================
 import pgpkg from 'pg'
-import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
 import { buildBatch } from '../../contracts/capture.mjs'
 
 const { Client } = pgpkg
@@ -43,12 +43,11 @@ const canWriteAdult = (a, k) => canWrite(a, k) && !isChild(a)
 console.log('Setting up two families + populating every table…')
 const uids = await setupFamily(cfg)
 const S = {}
-for (const a of ACTORS) {
-  const email = a === 'seth' ? A.parent.email : a === 'rose' ? A.tutor.email : a === 'obs' ? A.observer.email
-    : a === 'brielle' ? A.children.brielle.email : a === 'theo' ? A.children.theo.email
-    : a === 'dana' ? B.parent.email : B.children.wren.email
-  S[a] = await signInAs(cfg, email)
-}
+// adults sign in (Google stand-in = password); CHILDREN enter via the real mint
+for (const [a, email] of [['seth', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email], ['dana', B.parent.email]]) S[a] = await signInAs(cfg, email)
+S.brielle = await mintChildSession(cfg, S.seth.client, CID.Brielle)
+S.theo = await mintChildSession(cfg, S.seth.client, CID.Theo)
+S.wren = await mintChildSession(cfg, S.dana.client, CID.Wren)
 const tok = (a) => S[a].session.access_token
 const mkEvent = () => ({ clientAttemptId: uuid(), clientSessionId: uuid(), stageIndex: 0, skill: 'addition', result: 'correct', problemText: '2 + 3', correctAnswer: 5, chosenAnswer: 5, responseMs: 3000, inputMethod: 'tap', asrConfidence: null, runTimeS: 5, level: 1, mode: 'journey', context: { source: 'b3' } })
 

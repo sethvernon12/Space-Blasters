@@ -8,7 +8,7 @@
 // Run (stack up): eval "$(supabase status -o env)"; node db/scripts/secure-yard-test.mjs
 // ============================================================================
 import pgpkg from 'pg'
-import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
 import { buildBatch } from '../../contracts/capture.mjs'
 
 const { Client } = pgpkg
@@ -23,7 +23,9 @@ const CID = { Brielle: A.children.brielle.childId, Theo: A.children.theo.childId
 console.log('Setup + Brielle records a real set…')
 const uids = await setupFamily(cfg)
 const S = {}
-for (const [w, e] of [['seth', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email], ['brielle', A.children.brielle.email], ['theo', A.children.theo.email], ['dana', B.parent.email]]) S[w] = await signInAs(cfg, e)
+for (const [w, e] of [['seth', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email], ['dana', B.parent.email]]) S[w] = await signInAs(cfg, e)
+S.brielle = await mintChildSession(cfg, S.seth.client, CID.Brielle) // children enter via the real mint
+S.theo = await mintChildSession(cfg, S.seth.client, CID.Theo)
 {
   const ses = uuid()
   const evs = Array.from({ length: 8 }, (_, i) => ({ clientAttemptId: uuid(), clientSessionId: ses, stageIndex: 0, skill: 'addition', result: i === 5 ? 'incorrect' : 'correct', problemText: '2 + 3', correctAnswer: 5, chosenAnswer: i === 5 ? 4 : 5, responseMs: 3000, inputMethod: 'tap', asrConfidence: null, runTimeS: i, level: 1, mode: 'journey', context: { source: 'sy' } }))

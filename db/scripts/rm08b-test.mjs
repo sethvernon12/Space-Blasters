@@ -90,6 +90,24 @@ console.log('M7 (moderation on delivery):')
   r?.ok && clean ? ok('a link in a delivered prompt is MODERATED out on the authoritative path') : bad(`M7: ${JSON.stringify(del?.items)}`)
 }
 
+// ---- M7b (0012): the assignment TITLE is moderated on delivery ----
+console.log('M7b (title moderation):')
+{
+  const propT = (await S.rose.client.rpc('propose_assignment', { p_child_id: CID.Brielle, p_skill_id: 'add5', p_difficulty: 'x', p_predicted_p: 0.8, p_items: [{ operator: '+', operands: [2, 3], correct_answer: 5, prompt: 'What is 2 + 3?' }], p_title: 'Homework at http://evil.example.com', p_model: 'x', p_prompt_version: 'x' })).data
+  const r = (await S.rose.client.rpc('approve_assignment', { p_proposal_id: propT.proposal_id })).data
+  const del = (await q(`select title from public.assignments where id=$1`, [r?.assignment_id])).rows[0]
+  r?.ok && !/evil\.example\.com/.test(del?.title ?? '') ? ok('a link in the assignment TITLE is moderated out on delivery') : bad(`M7b: title="${del?.title}"`)
+}
+
+// ---- DoS (0012): malformed item operands → invalid_items (graceful) ----
+console.log('DoS (malformed item fails closed):')
+{
+  const propD = (await S.rose.client.rpc('propose_assignment', { p_child_id: CID.Brielle, p_skill_id: 'add5', p_difficulty: 'x', p_predicted_p: 0.8, p_items: [{ operator: '+', operands: ['abc', 3], correct_answer: 5, prompt: 'x' }], p_title: 'dositem', p_model: 'x', p_prompt_version: 'x' })).data
+  const r = (await S.rose.client.rpc('approve_assignment', { p_proposal_id: propD.proposal_id })).data
+  const delivered = (await q(`select count(*)::int n from public.assignments where title='dositem'`)).rows[0].n
+  r?.error === 'invalid_items' && delivered === 0 ? ok('non-numeric operands → invalid_items (graceful, not a thrown txn)') : bad(`DoS-assign: ${JSON.stringify({ r, delivered })}`)
+}
+
 // ---- KER-7: generation writes no mastery/consent ----
 console.log('KER-7:')
 {

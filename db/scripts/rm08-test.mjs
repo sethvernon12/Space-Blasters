@@ -136,6 +136,23 @@ console.log('M6 (rebuild requires consent):')
   await q(`update public.children set consent_id=$1 where id=$2`, [saved, CID.Brielle])
 }
 
+// ---- DoS (0012): malformed problem_dna grades incorrect, never crashes ----
+console.log('DoS (malformed DNA fails closed):')
+{
+  const subD = (await S.brielle.client.rpc('record_submission', { p_child_id: CID.Brielle, p_skill_id: 'add5', p_client_submission_id: uuid(), p_problem_dna: { operator: '+', operands: ['abc', 3], correct_answer: 4 }, p_submitted_answer: 4, p_explanation: 'x' })).data.submission_id
+  const propD = (await S.rose.client.rpc('propose_grade', { p_submission_id: subD, p_verdict: 'correct', p_score: 100, p_feedback: 'x', p_model: 'x', p_prompt_version: 'x', p_misconception_id: null })).data
+  const r = (await S.rose.client.rpc('approve_grade', { p_proposal_id: propD.proposal_id })).data
+  r?.ok && r?.verdict === 'incorrect' ? ok('non-numeric operands → recorded incorrect (graceful, no thrown txn)') : bad(`DoS-grade: ${JSON.stringify(r)}`)
+}
+
+// ---- M5b (0012): unique index blocks a duplicate grade event for a submission ----
+console.log('M5b (grade-per-submission unique backstop):')
+{
+  let e = null
+  try { await q(`insert into public.events (kind, author_actor_id, subject_child_id, payload) values ('grade',$1,$2, jsonb_build_object('submission_id',$3::text,'verdict','correct'))`, [uids.seth, CID.Brielle, sub1]) } catch (err) { e = err.message }
+  e ? ok('a second grade event for the same submission is rejected (unique index)') : bad('M5b: duplicate grade insert allowed')
+}
+
 // ---- Isolation + revocation ----
 console.log('Isolation + revocation:')
 {

@@ -39,8 +39,10 @@ Deno.serve(async (req) => {
   const { data: created, error: cErr } = await service.auth.admin.createUser({ email: handle, password: secret, email_confirm: true })
   if (cErr || !created?.user) return json({ error: 'create_failed' }, 500)
 
-  // 3. bind under the caller (parent) — register_child is RLS-keyed to auth.uid()
-  const { data: reg } = await caller.rpc('register_child', { p_auth_user_id: created.user.id, p_nickname: nickname, p_grade_band: gradeBand })
+  // 3. bind under the caller — SERVICE-ONLY register_child, parent_id derived
+  //    from the JWT-verified caller (never client-chosen); it also asserts the
+  //    child identity is a fresh @child.invalid handle, so no adult uid can be bound.
+  const { data: reg } = await service.rpc('register_child', { p_parent_id: who.user.id, p_auth_user_id: created.user.id, p_nickname: nickname, p_grade_band: gradeBand })
   if (!reg?.ok) {
     await service.auth.admin.deleteUser(created.user.id) // no orphan
     return json({ denied: true, reason: reg?.error ?? 'register_failed' }, 403)

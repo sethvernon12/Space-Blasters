@@ -84,6 +84,12 @@ try {
   childCreate.status === 403 && childMint.status === 403 && childRpc?.error === 'not_authorized'
     ? ok('a minted CHILD session cannot create children, mint sessions, or self-authorize a mint') : bad(`child escalation: ${JSON.stringify({ childCreate, childMint, childRpc })}`)
 
+  // ---- 5b. register_child is service-only: a client can't bind an arbitrary adult uid ----
+  const forge = await S.rose.client.rpc('register_child', { p_parent_id: uids.rose, p_auth_user_id: uids.seth, p_nickname: 'x', p_grade_band: null })
+  const sethPoisoned = (await q(`select count(*)::int n from public.children where auth_user_id=$1`, [uids.seth])).rows[0].n
+  const forgeBlocked = (!!forge.error || !forge.data?.ok) && sethPoisoned === 0
+  forgeBlocked ? ok('register_child is service-only — a client cannot bind an arbitrary adult uid (no takeover / no is_child_actor poisoning)') : bad(`register_child forge: ${JSON.stringify({ forge, sethPoisoned })}`)
+
   // ---- 6. single-use / replay: a one-time link cannot be verified twice ----
   const admin = createClient(cfg.apiUrl, cfg.serviceKey, { auth: { persistSession: false } })
   const { data: u2 } = await admin.auth.admin.getUserById((await q(`select auth_user_id from public.children where id=$1`, [newId])).rows[0].auth_user_id)

@@ -108,6 +108,10 @@ console.log('COM-01 (context-welded message):')
   okMsg?.ok ? ok('member (guardian) posts a context-welded message') : bad(`post_message ok-path: ${JSON.stringify(okMsg)}`)
   const danaMsg = (await S.dana.client.rpc('post_message', { p_channel_id: chanId, p_context_ref_kind: 'assignment', p_context_ref_id: ctxId, p_body: 'x' })).data
   danaMsg?.error === 'not_a_member' ? ok('non-member (Dana) cannot post to the channel') : bad(`non-member post: ${JSON.stringify(danaMsg)}`)
+  // K1 (0013): the message body passes the moderation choke point
+  const linkMsg = (await S.seth.client.rpc('post_message', { p_channel_id: chanId, p_context_ref_kind: 'assignment', p_context_ref_id: ctxId, p_body: 'Great — visit http://cheats.example.com' })).data
+  const linkBody = (await q(`select payload->>'body' b from public.events where id=$1`, [linkMsg?.event_id])).rows[0]
+  linkMsg?.ok && !/cheats\.example\.com/.test(linkBody?.b ?? '') ? ok('K1: a link in a message body is moderated out on write') : bad(`K1: body="${linkBody?.b}"`)
 }
 
 // ---- DER-10: opt-out = suppression row (never deletion) ----
@@ -190,6 +194,23 @@ console.log('C1 — group-join requires ownership (no cross-family self-join):')
   danaJoin?.error === 'not_authorized' && sethJoin?.error === 'not_authorized' && leaked === 0
     ? ok('Dana cannot join Wren into Seth\'s class; Seth cannot join Brielle into Dana\'s class; no membership created')
     : bad(`self-join: dana=${JSON.stringify(danaJoin)} seth=${JSON.stringify(sethJoin)} leaked=${leaked}`)
+}
+
+// ---- C2 (0011) adversarial: an in-group ADULT co-member from ANOTHER family ----
+// The owner CAN add a cross-family adult (member_actor_id). That adult becomes
+// is_group_member, but must still read ZERO child-subject events + zero raw rows.
+console.log('C2 — in-group cross-family adult co-member sees no child-subject data:')
+{
+  const jr = (await S.seth.client.rpc('join_group', { p_group_id: mathClass, p_member_child_id: null, p_member_actor_id: uids.dana, p_role: 'member' })).data
+  await drain()
+  const danaEvents = (await S.dana.client.from('events').select('id,subject_child_id').eq('group_id', mathClass)).data ?? []
+  const isMember = danaEvents.length > 0                                   // she sees group-only events → really a member
+  const childSubjectVisible = danaEvents.filter((e) => e.subject_child_id).length
+  const seesBrielleChild = (await S.dana.client.from('children').select('id').eq('id', CID.Brielle)).data?.length ?? 0
+  const seesBrielleAttempts = (await S.dana.client.from('attempts').select('id').eq('child_id', CID.Brielle)).data?.length ?? 0
+  jr?.ok && isMember && childSubjectVisible === 0 && seesBrielleChild === 0 && seesBrielleAttempts === 0
+    ? ok('cross-family adult member sees group-only events yet 0 child-subject events + 0 Brielle rows')
+    : bad(`C2 adult co-member: member=${isMember} childSubj=${childSubjectVisible} child=${seesBrielleChild} attempts=${seesBrielleAttempts} jr=${JSON.stringify(jr)}`)
 }
 
 await db.end()

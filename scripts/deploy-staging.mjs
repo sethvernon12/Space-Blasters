@@ -89,6 +89,7 @@ function setEnv(name, value) {
 setEnv('VITE_SUPABASE_URL', supaUrl)
 setEnv('VITE_SUPABASE_PUBLISHABLE_KEY', supaAnon)
 setEnv('VITE_STAGING_GATE', gate)
+setEnv('VITE_ALLOW_DEV_SIGNIN', 'true') // synthetic staging keeps the dev switcher; a real-families build must NOT set this
 
 // ---- 3. attach the domain (guard) ----
 assertStagingTarget()

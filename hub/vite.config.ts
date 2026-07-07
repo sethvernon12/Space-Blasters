@@ -1,36 +1,37 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
-// Supabase URL + publishable key resolution:
-//   1. If VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY are set (e.g. an
-//      UNCOMMITTED hub/.env.local), use them. This is how a LOCAL preview is
-//      pointed at the disposable DEV project so sign-in never creates rows in
-//      production. .env.local is gitignored and must never be committed.
-//   2. Otherwise fall back to the EXACT values already shipped in the live game
-//      (root index.html) — the committed default. So any build without an env
-//      override targets production, exactly as before.
+// Supabase URL + publishable key resolution — FAIL-CLOSED, never silently prod:
+//   1. If VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY are set (an
+//      UNCOMMITTED hub/.env.local, or the staging project's env), use them.
+//      This is how a build is explicitly pointed at LOCAL / DEV / staging.
+//   2. Otherwise default to the LOCAL disposable stack — NOT production. A build
+//      with no target env therefore talks to localhost (an obvious, safe failure
+//      if that stack isn't running), never to the live game's production project.
+//      To target DEV/staging/prod you MUST set the env explicitly.
 // Only the public browser (publishable/anon) values are ever used here; no
 // service-role/admin key exists anywhere in this app.
+const LOCAL_URL = 'http://127.0.0.1:54321'
+const LOCAL_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0'
+const PROD_REF = 'oafovcrxdjoyaxsytyjg'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, here, 'VITE_')
   let url = env.VITE_SUPABASE_URL || ''
   let key = env.VITE_SUPABASE_PUBLISHABLE_KEY || ''
-  let source = 'hub/.env.local (override)'
+  let source = 'env override (VITE_SUPABASE_*)'
   if (!url || !key) {
-    const game = fs.readFileSync(path.resolve(here, '..', 'index.html'), 'utf8')
-    url = url || game.match(/const URL = '(https:\/\/[a-z0-9]+\.supabase\.co)'/)?.[1] || ''
-    key = key || game.match(/const KEY = '(sb_publishable_[A-Za-z0-9_-]+)'/)?.[1] || ''
-    source = '../index.html (live-game default — PRODUCTION)'
+    url = url || LOCAL_URL
+    key = key || LOCAL_ANON
+    source = 'LOCAL default (no env override) — never production'
   }
-  if (!url || !key) throw new Error('Could not resolve the Supabase URL/key (env override or ../index.html)')
-  // Make the target loud at build time so no one is ever unsure which project a
-  // preview talks to.
+  if (!url || !key) throw new Error('Could not resolve the Supabase URL/key')
+  // Prod is reachable only by an EXPLICIT override, and it's loud when it happens.
+  if (url.includes(PROD_REF)) console.warn(`\n[hub] WARNING: build targets the PRODUCTION Supabase project (${PROD_REF}) via an explicit override.\n`)
   console.log(`\n[hub] Supabase target: ${url}  (from ${source})\n`)
 
   return {

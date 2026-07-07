@@ -5,13 +5,22 @@ import { loadChildrenAndGrants, type ChildRow } from './api'
 
 export type Role = 'parent' | 'child' | 'tutor'
 
-// LOCAL dev "Sign in as…" — real Google OAuth is deferred to DEV promotion.
-export const DEV_ACCOUNTS = [
-  { label: 'Seth', sub: 'Parent — Brielle & Theo', email: 'seth@local.test', icon: 'Users' },
-  { label: 'Brielle', sub: 'Learner', email: 'brielle@local.test', icon: 'Rocket' },
-  { label: 'Grandma Rose', sub: 'Tutor for Brielle', email: 'rose@local.test', icon: 'GraduationCap' },
-]
-const PW = 'localtest123'
+// The dev "Sign in as…" switcher is a LOCAL/synthetic-staging stand-in for real
+// Google OAuth (Phase 3). It is gated behind an EXPLICIT build flag so it — and
+// the synthetic accounts + shared password below — are dead-code-eliminated from
+// any build without VITE_ALLOW_DEV_SIGNIN=true (i.e. never shipped to real
+// families). A real build renders the OAuth SignIn placeholder instead.
+export const ALLOW_DEV_SIGNIN = import.meta.env.VITE_ALLOW_DEV_SIGNIN === 'true'
+
+// Gated so the emails + shared password tree-shake out when the flag is off.
+export const DEV_ACCOUNTS = ALLOW_DEV_SIGNIN
+  ? [
+      { label: 'Seth', sub: 'Parent — Brielle & Theo', email: 'seth@local.test', icon: 'Users' },
+      { label: 'Brielle', sub: 'Learner', email: 'brielle@local.test', icon: 'Rocket' },
+      { label: 'Grandma Rose', sub: 'Tutor for Brielle', email: 'rose@local.test', icon: 'GraduationCap' },
+    ]
+  : []
+const PW = ALLOW_DEV_SIGNIN ? 'localtest123' : ''
 
 export interface Profile { role: Role; uid: string; displayName: string; children: ChildRow[]; canWrite: Record<string, boolean> }
 
@@ -61,6 +70,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [session])
 
   const signInAs = useCallback(async (email: string) => {
+    if (!ALLOW_DEV_SIGNIN) return 'dev sign-in is disabled in this build'
     const { error } = await supabase.auth.signInWithPassword({ email, password: PW })
     return error ? error.message : null
   }, [])

@@ -82,6 +82,16 @@ console.log('visibility_scope (default private, enforced):')
   seenObs?.length === 1 ? ok('family-scoped artifact IS visible to a viewer (observer)') : bad('family artifact not visible to observer')
 }
 
+// ---- K2 (0013): child-visible artifacts pass the moderation choke on insert ----
+console.log('K2 (child-visible artifact moderation):')
+{
+  const child = (await S.seth.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.seth, author_role: 'parent', kind: 'feedback', payload: { feedback: 'Great — go to http://cheats.example.com' }, visibility_scope: 'sent-to-child' }).select()).data?.[0]
+  const priv = (await S.seth.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.seth, author_role: 'parent', kind: 'feedback', payload: { feedback: 'private ref http://internal.example.com' }, visibility_scope: 'private' }).select()).data?.[0]
+  const childClean = !/cheats\.example\.com/.test(child?.payload?.feedback ?? '')
+  const privKept = /internal\.example\.com/.test(priv?.payload?.feedback ?? '')  // private is not child-visible → not moderated
+  childClean && privKept ? ok('link in a sent-to-child feedback is moderated; a private artifact is left untouched') : bad(`K2: childClean=${childClean} privKept=${privKept} priv=${JSON.stringify(priv?.payload)}`)
+}
+
 // ---- 5. revoked grant loses authorize ----
 console.log('revocation:')
 {

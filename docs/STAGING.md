@@ -56,6 +56,7 @@ Build from this branch with Vercel env:
 VITE_SUPABASE_URL           = <DEV project url>
 VITE_SUPABASE_PUBLISHABLE_KEY = <DEV anon key>
 VITE_STAGING_GATE           = <chosen passphrase>     # enables the access gate
+VITE_ALLOW_DEV_SIGNIN       = true                    # synthetic staging keeps the dev "Sign in as" switcher
 ```
 `vercel.json` on this branch already: builds the hub only (no `/play`), SPA-rewrites, and sends `X-Robots-Tag: noindex`. Deploy, then bind the domain (DNS).
 

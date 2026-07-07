@@ -59,6 +59,17 @@ for (const [a, k] of [['brielle', 'Brielle'], ['theo', 'Theo'], ['wren', 'Wren']
       `insert into public.child_skill_misconception (child_id, skill_id, misconception_id, evidence_count, active) values ($1,'add5','adds-instead',2,true)`, [CID[k]])
   } finally { await c.end() }
 }
+// submissions (child self-records via RPC) + assessment (projection, pg-seeded) per child — so the sweep has rows
+for (const [a, k] of [['brielle', 'Brielle'], ['theo', 'Theo'], ['wren', 'Wren']]) {
+  await S[a].client.rpc('record_submission', { p_child_id: CID[k], p_skill_id: 'add5', p_client_submission_id: uuid(), p_problem_dna: { operator: '+', operands: [2, 3], correct_answer: 5 }, p_submitted_answer: 5, p_explanation: 'x' })
+}
+{
+  const c = new Client({ connectionString: cfg.dbUrl }); await c.connect()
+  try {
+    for (const k of KIDS) await c.query(
+      `insert into public.child_skill_assessment (child_id, skill_id, graded_count, correct_count, transfer_success_count) values ($1,'add5',1,1,1)`, [CID[k]])
+  } finally { await c.end() }
+}
 await S.seth.client.from('assignments').insert([
   { child_id: CID.Brielle, assigned_by: uids.seth, skill_id: 'add5', title: 'a' },
   { child_id: CID.Theo, assigned_by: uids.seth, skill_id: 'add5', title: 'a' }])
@@ -80,7 +91,8 @@ async function seesRows(a, table, col, cid) {
 }
 const READ_TABLES = [['children', 'id'], ['sessions', 'child_id'], ['attempts', 'child_id'],
   ['child_skill_mastery', 'child_id'], ['child_skill_misconception', 'child_id'],
-  ['assignments', 'child_id'], ['teaching_artifacts', 'child_id']]
+  ['assignments', 'child_id'], ['teaching_artifacts', 'child_id'],
+  ['submissions', 'child_id'], ['child_skill_assessment', 'child_id']]
 
 async function writeAttempts(a, cid) {
   const { data } = await S[a].client.rpc('record_attempts_authed', { p_child_id: cid, p_batch: buildBatch([mkEvent()]) })
@@ -148,6 +160,8 @@ await blocked('INSERT attempts direct → blocked (RPC-only)', () => M.from('att
 await blocked('INSERT sessions direct → blocked', () => M.from('sessions').insert({ child_id: cidB, client_session_id: uuid() }).select())
 await blocked('INSERT child_skill_mastery → blocked', () => M.from('child_skill_mastery').insert({ child_id: cidB, skill_id: 'add5', alpha: 9, beta: 1 }).select())
 await blocked('INSERT child_skill_misconception → blocked', () => M.from('child_skill_misconception').insert({ child_id: cidB, skill_id: 'add5', misconception_id: 'x' }).select())
+await blocked('INSERT submissions direct → blocked (RPC-only)', () => M.from('submissions').insert({ child_id: cidB, skill_id: 'add5', client_submission_id: uuid(), submitted_answer: 5 }).select())
+await blocked('INSERT child_skill_assessment → blocked (definer-only)', () => M.from('child_skill_assessment').insert({ child_id: cidB, skill_id: 'add5', graded_count: 1 }).select())
 await blocked('INSERT consent_ledger → blocked (service-only)', () => M.from('consent_ledger').insert({ parent_id: uids.seth, child_id: cidB, action: 'grant', method: 'other_vpc', policy_version: 'x' }).select())
 await blocked('UPDATE attempts → blocked (append-only)', () => M.from('attempts').update({ result: 'incorrect' }).eq('child_id', cidB).select())
 await blocked('DELETE attempts → blocked (append-only)', () => M.from('attempts').delete().eq('child_id', cidB).select())

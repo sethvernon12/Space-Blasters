@@ -50,9 +50,21 @@ export const FILES_M3 = [
   'supabase/migrations/0010_assignment_gen.sql',
   'supabase/migrations/0011_review_hardening.sql',
   'supabase/migrations/0012_hardening2.sql',
+  'supabase/migrations/0013_moderation_and_guards.sql',
 ]
 
+const DEV_REF = 'appplvbgyghlhrjcaagn'
+const PROD_REF = 'oafovcrxdjoyaxsytyjg'
+
 export async function applySchema(dbUrl, files = FILES) {
+  // Defense-in-depth: this function DROPS public — refuse any target that isn't
+  // localhost or the DEV ref, and HARD-REFUSE prod, regardless of caller guards.
+  if (String(dbUrl).includes(PROD_REF)) throw new Error('applySchema REFUSES the prod ref — it drops the public schema.')
+  let host
+  try { host = new URL(dbUrl).hostname } catch { throw new Error('applySchema: unparseable DB URL') }
+  if (!LOCAL_HOSTS.has(host) && !String(dbUrl).includes(DEV_REF)) {
+    throw new Error(`applySchema only targets localhost or the DEV ref (got host "${host}").`)
+  }
   const c = new Client({ connectionString: dbUrl })
   await c.connect()
   try {

@@ -24,7 +24,7 @@ create table public.submissions (
   client_submission_id uuid not null,                 -- idempotency
   problem_dna          jsonb not null default '{}'::jsonb,  -- {operator, operands, prompt, correct_answer}
   submitted_answer     int,
-  explanation          text,                          -- child's words — UNTRUSTED at the gateway
+  explanation          text,                          -- child's words: UNTRUSTED. Currently WITHHELD from the AI (grade-work never selects/sends it). Before any path feeds it to a model (richer grading / OCR), it MUST be quoted as data, never interpolated as instructions (SEC-04/AI-14).
   created_at           timestamptz not null default now(),
   unique (child_id, client_submission_id)
 );

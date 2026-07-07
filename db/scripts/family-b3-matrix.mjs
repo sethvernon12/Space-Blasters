@@ -35,6 +35,10 @@ const canParent = (a, k) => (parentKids[a] || []).includes(k)
 const canOwn = (a, k) => canParent(a, k) || childSelf[a] === k          // is_my_child
 const canView = (a, k) => canOwn(a, k) || (viewGrant[a] || []).includes(k)   // can_view_child
 const canWrite = (a, k) => canOwn(a, k) || (writeGrant[a] || []).includes(k) // can_write_child
+const isChild = (a) => !!childSelf[a]
+// 0014: the adder-of-record must be an ADULT — a child identity can't author a
+// teaching_artifact as parent/tutor, even for their own child row.
+const canWriteAdult = (a, k) => canWrite(a, k) && !isChild(a)
 
 console.log('Setting up two families + populating every table…')
 const uids = await setupFamily(cfg)
@@ -131,7 +135,7 @@ async function runWriteMatrices(tag) {
   console.log(`${tag} WRITE matrices:`)
   await matrix('WRITE attempts (record_attempts_authed = is_my_child)', canOwn, (a, k) => writeAttempts(a, CID[k]))
   await matrix('WRITE assignments (can_write_child)', canWrite, (a, k) => writeAssign(a, CID[k]))
-  await matrix('WRITE teaching_artifacts (can_write_child + truthful role)', canWrite, (a, k) => writeTeach(a, k, CID[k]))
+  await matrix('WRITE teaching_artifacts (adult writer only — 0014, child self denied)', canWriteAdult, (a, k) => writeTeach(a, k, CID[k]))
   await matrix('UPDATE children nickname (parent only)', canParent, (a, k) => writeRename(a, CID[k]))
 }
 

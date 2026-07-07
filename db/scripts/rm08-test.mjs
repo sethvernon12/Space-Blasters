@@ -79,6 +79,21 @@ console.log('H3 (forged correct_answer ignored):')
   r?.verdict === 'incorrect' ? ok('forged correct_answer=4 for 2+3 → solver recomputes 5 → RECORDED incorrect (no self-certify)') : bad(`H3: verdict=${r?.verdict}`)
 }
 
+// ---- SEC-REV-13 (0014): the human-in-the-loop is an ADULT, never a child ----
+console.log('SEC-REV-13 (adult-only approve + authorship):')
+{
+  const subC = (await S.brielle.client.rpc('record_submission', { p_child_id: CID.Brielle, p_skill_id: 'add5', p_client_submission_id: uuid(), p_problem_dna: { operator: '+', operands: [2, 3], correct_answer: 5 }, p_submitted_answer: 5, p_explanation: 'x' })).data.submission_id
+  const propC = (await S.rose.client.rpc('propose_grade', { p_submission_id: subC, p_verdict: 'correct', p_score: 100, p_feedback: 'ok', p_model: 'x', p_prompt_version: 'x', p_misconception_id: null })).data
+  const childApprove = (await S.brielle.client.rpc('approve_grade', { p_proposal_id: propC.proposal_id })).data
+  const childAuthor = await S.brielle.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.brielle, author_role: 'parent', kind: 'feedback', payload: {}, visibility_scope: 'sent-to-child' }).select()
+  const adultApprove = (await S.rose.client.rpc('approve_grade', { p_proposal_id: propC.proposal_id })).data
+  const childBlocked = childApprove?.error === 'not_authorized'
+  const authorBlocked = !!childAuthor.error || (childAuthor.data?.length ?? 0) === 0
+  childBlocked ? ok('a CHILD cannot approve their own AI proposal') : bad(`child approve: ${JSON.stringify(childApprove)}`)
+  authorBlocked ? ok('a CHILD cannot author a teaching_artifact as parent') : bad('child authored as parent!')
+  adultApprove?.ok ? ok('an ADULT (tutor) CAN approve the same proposal') : bad(`adult approve: ${JSON.stringify(adultApprove)}`)
+}
+
 // ---- override changes feedback only; moderate() on the child-facing string ----
 console.log('override (feedback only) + moderate:')
 {

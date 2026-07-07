@@ -51,6 +51,7 @@ export const FILES_M3 = [
   'supabase/migrations/0011_review_hardening.sql',
   'supabase/migrations/0012_hardening2.sql',
   'supabase/migrations/0013_moderation_and_guards.sql',
+  'supabase/migrations/0014_actor_identity.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

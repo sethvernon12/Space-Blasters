@@ -88,10 +88,13 @@ console.log('visibility_scope (default private, enforced):')
 console.log('K2 (child-visible artifact moderation):')
 {
   const child = (await S.seth.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.seth, author_role: 'parent', kind: 'feedback', payload: { feedback: 'Great — go to http://cheats.example.com' }, visibility_scope: 'sent-to-child' }).select()).data?.[0]
+  // any NON-PRIVATE scope is child-readable → must be moderated (not just the two named ones)
+  const foll = (await S.seth.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.seth, author_role: 'parent', kind: 'feedback', payload: { feedback: 'ping http://followers.example.com' }, visibility_scope: 'followers' }).select()).data?.[0]
   const priv = (await S.seth.client.from('teaching_artifacts').insert({ child_id: CID.Brielle, author_id: uids.seth, author_role: 'parent', kind: 'feedback', payload: { feedback: 'private ref http://internal.example.com' }, visibility_scope: 'private' }).select()).data?.[0]
   const childClean = !/cheats\.example\.com/.test(child?.payload?.feedback ?? '')
-  const privKept = /internal\.example\.com/.test(priv?.payload?.feedback ?? '')  // private is not child-visible → not moderated
-  childClean && privKept ? ok('link in a sent-to-child feedback is moderated; a private artifact is left untouched') : bad(`K2: childClean=${childClean} privKept=${privKept} priv=${JSON.stringify(priv?.payload)}`)
+  const follClean = !/followers\.example\.com/.test(foll?.payload?.feedback ?? '')
+  const privKept = /internal\.example\.com/.test(priv?.payload?.feedback ?? '')  // private is not child-readable → not moderated
+  childClean && follClean && privKept ? ok('every non-private (child-readable) scope is moderated; a private artifact is left untouched') : bad(`K2: sent=${childClean} followers=${follClean} privKept=${privKept}`)
 }
 
 // ---- 5. revoked grant loses authorize ----

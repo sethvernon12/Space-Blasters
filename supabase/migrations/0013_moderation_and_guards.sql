@@ -39,9 +39,10 @@ language plpgsql set search_path = ''
 as $$
 declare k text;
 begin
-  -- child-visible scopes are the non-private ones (the child can_view self);
+  -- child-visible = ANY non-private scope (matches teaching_artifacts_select's
+  -- `visibility_scope <> 'private'` child-read rule — not an enumerated subset).
   -- moderate the known child-facing text keys if present as strings.
-  if new.visibility_scope in ('family', 'sent-to-child') and new.payload is not null then
+  if coalesce(new.visibility_scope, 'private') <> 'private' and new.payload is not null then
     foreach k in array array['feedback', 'prompt', 'body', 'note', 'message', 'text'] loop
       if jsonb_typeof(new.payload -> k) = 'string' then
         new.payload := jsonb_set(new.payload, array[k], to_jsonb(public.moderate_text(new.payload ->> k)));

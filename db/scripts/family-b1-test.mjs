@@ -30,7 +30,7 @@ const CID = { brielle: A.children.brielle.childId, theo: A.children.theo.childId
 console.log('A. minted sessions resolve to the right auth.uid:')
 const S = {}
 for (const [who, email] of [
-  ['maya', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email],
+  ['seth', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email],
   ['brielle', A.children.brielle.email], ['theo', A.children.theo.email],
   ['dana', B.parent.email], ['wren', B.children.wren.email],
 ]) {
@@ -47,7 +47,7 @@ async function kidsSeenBy(client) {
   return data.map((r) => r.nickname).sort()
 }
 const expect = [
-  ['maya (parent A)', S.maya, ['Brielle', 'Theo']],
+  ['seth (parent A)', S.seth, ['Brielle', 'Theo']],
   ['brielle (child)', S.brielle, ['Brielle']],
   ['theo (child)', S.theo, ['Theo']],
   ['rose (tutor→Brielle)', S.rose, ['Brielle']],
@@ -79,8 +79,8 @@ async function writeAs(client, childId) {
   r.data?.ok && r.data.inserted === 1 ? ok('brielle records for HERSELF → inserted 1') : bad(`brielle self-write: ${JSON.stringify(r.data || r.error?.message)}`)
 }
 {
-  const r = await writeAs(S.maya.client, CID.brielle)
-  r.data?.ok && r.data.inserted === 1 ? ok('maya (parent) records for Brielle → inserted 1') : bad(`maya→brielle: ${JSON.stringify(r.data || r.error?.message)}`)
+  const r = await writeAs(S.seth.client, CID.brielle)
+  r.data?.ok && r.data.inserted === 1 ? ok('seth (parent) records for Brielle → inserted 1') : bad(`seth→brielle: ${JSON.stringify(r.data || r.error?.message)}`)
 }
 {
   const r = await writeAs(S.rose.client, CID.brielle)
@@ -110,8 +110,8 @@ async function assign(client, childId, uid) {
   ;(error || !data?.length) ? ok('rose assigns for Theo (NOT granted) → blocked by RLS') : bad(`rose→Theo assign should be blocked, got ${JSON.stringify(data)}`)
 }
 {
-  const { data, error } = await assign(S.maya.client, CID.theo, uids.maya)
-  !error && data?.length === 1 ? ok('maya (parent) assigns for her own Theo → created') : bad(`maya→Theo assign failed: ${error?.message}`)
+  const { data, error } = await assign(S.seth.client, CID.theo, uids.seth)
+  !error && data?.length === 1 ? ok('seth (parent) assigns for her own Theo → created') : bad(`seth→Theo assign failed: ${error?.message}`)
 }
 
 // ---- E. teaching_artifacts: tutor teaching WRITE-power, scoped + truthful ----
@@ -128,8 +128,8 @@ async function artifact(client, childId, uid, role, kind, extra = {}) {
   allOk ? ok('rose (tutor) creates grade/feedback/annotation/reteach/material for Brielle → all created') : bad('rose teaching writes for Brielle failed')
 }
 {
-  const { data, error } = await artifact(S.maya.client, CID.brielle, uids.maya, 'parent', 'feedback')
-  !error && data?.length === 1 ? ok('maya (parent) authors feedback for Brielle → created') : bad(`maya feedback: ${error?.message}`)
+  const { data, error } = await artifact(S.seth.client, CID.brielle, uids.seth, 'parent', 'feedback')
+  !error && data?.length === 1 ? ok('seth (parent) authors feedback for Brielle → created') : bad(`seth feedback: ${error?.message}`)
 }
 {
   const { data, error } = await artifact(S.rose.client, CID.theo, uids.rose, 'tutor', 'grade')
@@ -186,14 +186,14 @@ console.log('G. tutor cannot touch attempts / mastery / consent:')
 // ---- H. every tutor grant logged as a parental-disclosure consent event ----
 console.log('H. tutor grants logged as disclosure events:')
 {
-  const { data, error } = await S.maya.client.from('consent_ledger').select('action, child_id, detail').eq('action', 'disclosure')
-  if (error) { bad(`maya consent read: ${error.message}`) }
+  const { data, error } = await S.seth.client.from('consent_ledger').select('action, child_id, detail').eq('action', 'disclosure')
+  if (error) { bad(`seth consent read: ${error.message}`) }
   else {
     const grantees = data.map((r) => r.detail?.grantee_id)
     const hasRose = data.some((r) => r.detail?.grantee_id === uids.rose && r.child_id === CID.brielle)
     const hasObs = grantees.includes(uids.obs)
     hasRose && hasObs && data.length === 2
-      ? ok(`maya sees 2 disclosure events (tutor Rose + observer) for her family`)
+      ? ok(`seth sees 2 disclosure events (tutor Rose + observer) for her family`)
       : bad(`disclosure events wrong: ${JSON.stringify(data.map((r) => ({ g: r.detail?.grantee_id, c: r.child_id })))}`)
   }
 }

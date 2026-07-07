@@ -26,7 +26,7 @@ console.log('Setting up families + signing in…')
 const uids = await setupFamily(cfg)
 const S = {}
 for (const [who, email] of [
-  ['maya', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email],
+  ['seth', A.parent.email], ['rose', A.tutor.email], ['obs', A.observer.email],
   ['brielle', A.children.brielle.email], ['dana', B.parent.email],
 ]) S[who] = await signInAs(cfg, email)
 
@@ -54,7 +54,7 @@ async function masteryVia(who) { return getMastery(transportFor(S[who]), CID.bri
     ? ok(`brielle (child) reads her add5: attempts 8, correct 7, mastery ${a.mastery.toFixed(2)}, subject ${a.subject}`)
     : bad(`brielle read wrong: ${JSON.stringify(a)}`)
 }
-for (const who of ['maya', 'rose', 'obs']) {
+for (const who of ['seth', 'rose', 'obs']) {
   const a = add5Of(await masteryVia(who))
   a && a.attempts === 8 && a.correct === 7 ? ok(`${who} reads Brielle's add5 (same real numbers)`) : bad(`${who} read wrong: ${JSON.stringify(a)}`)
 }
@@ -79,8 +79,8 @@ console.log('getNextActivity derives from real mastery:')
 // ---- revoke the tutor grant → the tutor loses the read ----
 console.log('revocation cuts access:')
 {
-  const { error } = await S.maya.client.from('tutor_grants').update({ active: false }).eq('tutor_id', uids.rose).eq('child_id', CID.brielle)
-  if (error) bad(`maya revoke failed: ${error.message}`)
+  const { error } = await S.seth.client.from('tutor_grants').update({ active: false }).eq('tutor_id', uids.rose).eq('child_id', CID.brielle)
+  if (error) bad(`seth revoke failed: ${error.message}`)
   const afterRose = await masteryVia('rose')
   afterRose.skills.length === 0 ? ok('after revoke, rose reads Brielle → empty (access cut)') : bad(`rose should be cut off: ${JSON.stringify(afterRose.skills)}`)
   const stillObs = add5Of(await masteryVia('obs'))

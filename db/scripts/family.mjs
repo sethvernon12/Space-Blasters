@@ -31,7 +31,7 @@ export function m3Config() {
 // The family: opaque child_ids; local emails + one shared test password.
 export const FAMILY = {
   alpha: {
-    parent: { email: 'maya@local.test', role: 'parent' },
+    parent: { email: 'seth@local.test', role: 'parent' },
     tutor: { email: 'rose@local.test', role: 'tutor' },
     observer: { email: 'obs@local.test', role: 'observer' }, // view-only grant (can_write=false)
     children: {
@@ -77,7 +77,7 @@ export async function setupFamily(cfg) {
 
   // mint users
   const uids = {}
-  uids.maya = await mintUser(admin, FAMILY.alpha.parent.email)
+  uids.seth = await mintUser(admin, FAMILY.alpha.parent.email)
   uids.rose = await mintUser(admin, FAMILY.alpha.tutor.email)
   uids.obs = await mintUser(admin, FAMILY.alpha.observer.email)
   uids.brielle = await mintUser(admin, FAMILY.alpha.children.brielle.email)
@@ -101,21 +101,21 @@ export async function setupFamily(cfg) {
       await c.query(`update public.children set consent_id = $1 where id = $2`, [rows[0].id, childId])
     }
     const A = FAMILY.alpha, B = FAMILY.beta
-    await seedChild(A.children.brielle.childId, uids.maya, uids.brielle, A.children.brielle.nickname, A.children.brielle.gradeBand)
-    await seedChild(A.children.theo.childId, uids.maya, uids.theo, A.children.theo.nickname, A.children.theo.gradeBand)
+    await seedChild(A.children.brielle.childId, uids.seth, uids.brielle, A.children.brielle.nickname, A.children.brielle.gradeBand)
+    await seedChild(A.children.theo.childId, uids.seth, uids.theo, A.children.theo.nickname, A.children.theo.gradeBand)
     await seedChild(B.children.wren.childId, uids.dana, uids.wren, B.children.wren.nickname, B.children.wren.gradeBand)
 
     // Grandma Rose is a TEACHING tutor for BRIELLE ONLY (not Theo, not Wren)
     await c.query(
       `insert into public.tutor_grants (tutor_id, child_id, granted_by, active, role, can_write)
        values ($1,$2,$3,true,'tutor',true)`,
-      [uids.rose, A.children.brielle.childId, uids.maya])
+      [uids.rose, A.children.brielle.childId, uids.seth])
     // A VIEW-ONLY observer for Brielle (can_write=false) — proves can_write_child
     // excludes read-only grants. (Each grant also logs a disclosure consent event.)
     await c.query(
       `insert into public.tutor_grants (tutor_id, child_id, granted_by, active, role, can_write)
        values ($1,$2,$3,true,'observer',false)`,
-      [uids.obs, A.children.brielle.childId, uids.maya])
+      [uids.obs, A.children.brielle.childId, uids.seth])
   } finally {
     await c.end()
   }

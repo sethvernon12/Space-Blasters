@@ -11,3 +11,7 @@ screens/
 .env.example
 .gitignore
 contracts/
+.env
+.env.*
+hub/.env
+hub/.env.*

@@ -102,3 +102,19 @@ export async function getChildSummary(childId: string): Promise<ChildSummary | n
   if (error || !data || (data as { denied?: boolean }).denied) return null
   return data as ChildSummary
 }
+
+// ---- RM-08 grading loop (every AI grade is a proposal; a human records it) ----
+export interface PendingGrade { id: string; child_id: string; target_id: string; payload: { verdict?: string; feedback?: string; model?: string; prompt_version?: string } }
+export async function getPendingGrades(): Promise<PendingGrade[]> {
+  const { data } = await supabase.rpc('pending_grades')
+  return (data ?? []) as PendingGrade[]
+}
+export async function approveGrade(proposalId: string, override?: string) {
+  return supabase.rpc('approve_grade', { p_proposal_id: proposalId, p_override_feedback: override ?? null })
+}
+// gradeWork routes through the single model door (Edge Function); returns a proposal, records nothing.
+export async function gradeWork(submissionId: string) {
+  const { data, error } = await supabase.functions.invoke('grade-work', { body: { submissionId } })
+  if (error) return null
+  return data
+}

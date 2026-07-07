@@ -14,7 +14,9 @@
     "test:m3-ui": "node scripts/hub-b5-e2e.mjs",
     "test:secure-yard": "node scripts/secure-yard-test.mjs",
     "test:secure-yard-ui": "node scripts/secure-yard-e2e.mjs",
-    "test:rm07": "node scripts/rm07-test.mjs"
+    "test:rm07": "node scripts/rm07-test.mjs",
+    "test:rm08": "node scripts/rm08-test.mjs",
+    "test:rm08-ui": "node scripts/rm08-e2e.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

@@ -415,3 +415,6 @@ enabled = true
 
 [functions.child-summary]
 verify_jwt = true
+
+[functions.grade-work]
+verify_jwt = true

@@ -3,9 +3,9 @@
 // Flow: authorize (fail-closed) -> child_context_pack (whitelist, no name) ->
 // gateway.generate (mock, fail-closed to a ZDR-eligible provider) -> verify
 // (deterministic, no fabricated numbers) -> moderate (choke point) -> audit.
-import { generateSummary } from './gateway/index.ts'
-import { verifyClaims } from './verify.ts'
-import { moderate } from './moderate.ts'
+import { runGateway } from '../_shared/gateway.ts'
+import { verifyNumbers } from '../_shared/verify.ts'
+import { moderate } from '../_shared/moderate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -54,9 +54,10 @@ Deno.serve(async (req) => {
   }
 
   // 3. AI gateway (mock; fails closed if no ZDR-eligible provider)
-  const gen = generateSummary(pack, { promptVersion: 'summary-v1' })
-  // 4. deterministic-solver verify (no fabricated numbers) + 5. moderate choke point
-  const verified = verifyClaims(pack, gen.text)
+  const gen = runGateway('summary', { skills: pack.skills ?? [] }, { promptVersion: 'summary-v1' })
+  // 4. verify (no fabricated numbers) + 5. moderate choke point
+  const allowedPct = new Set((pack.skills ?? []).map((s: { mastery?: number }) => Math.round((s.mastery ?? 0) * 100)))
+  const verified = verifyNumbers(allowedPct, gen.text, /(\d+)%/g, 'Your learner has been practicing math — see the skill bars below for exact progress.')
   const safe = moderate(verified.text)
 
   // 6. audit — append-only who/what/when + model/prompt version

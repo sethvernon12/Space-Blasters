@@ -46,6 +46,7 @@ export const FILES_M3 = [
   'supabase/migrations/0006_hardening.sql',
   'supabase/migrations/0007_groups.sql',
   'supabase/migrations/0008_derivation_engine.sql',
+  'supabase/migrations/0009_grading.sql',
 ]
 
 export async function applySchema(dbUrl, files = FILES) {

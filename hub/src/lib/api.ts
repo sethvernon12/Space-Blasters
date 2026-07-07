@@ -118,3 +118,18 @@ export async function gradeWork(submissionId: string) {
   if (error) return null
   return data
 }
+
+// ---- RM-08b assignment generation (proposal-behind-approval, same as grades) ----
+export interface PendingAssignment { id: string; child_id: string; payload: { title?: string; skill_id?: string; predicted_p?: number; items?: Array<{ prompt?: string }>; model?: string } }
+export async function getPendingAssignments(): Promise<PendingAssignment[]> {
+  const { data } = await supabase.rpc('pending_assignments')
+  return (data ?? []) as PendingAssignment[]
+}
+export async function approveAssignment(proposalId: string, overrideTitle?: string) {
+  return supabase.rpc('approve_assignment', { p_proposal_id: proposalId, p_override_title: overrideTitle ?? null })
+}
+export async function generateAssignment(childId: string) {
+  const { data, error } = await supabase.functions.invoke('generate-assignment', { body: { childId } })
+  if (error) return null
+  return data
+}

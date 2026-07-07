@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
 import { MasteryBar } from '@/components/MasteryBar'
-import { approveGrade, createAssignment, createGrade, getMastery, getPendingGrades, listAssignments, type Assignment, type PendingGrade, type SkillMastery } from '@/lib/api'
+import { approveAssignment, approveGrade, createAssignment, createGrade, generateAssignment, getMastery, getPendingAssignments, getPendingGrades, listAssignments, type Assignment, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import type { Profile } from '@/lib/session'
 
 const FEATURE_AI_GRADING = true // flag-gated; every AI grade is a proposal a human records
@@ -11,6 +11,7 @@ export default function TutorHome({ profile }: { profile: Profile }) {
   const [skillsByChild, setSkills] = useState<Record<string, SkillMastery[]>>({})
   const [assignsByChild, setAssigns] = useState<Record<string, Assignment[]>>({})
   const [pending, setPending] = useState<PendingGrade[]>([])
+  const [pendingAssign, setPendingAssign] = useState<PendingAssignment[]>([])
   const [title, setTitle] = useState('Practice Add within 5')
   const [flash, setFlash] = useState<string | null>(null)
   const childName = (id: string) => profile.children.find((c) => c.id === id)?.nickname ?? 'Student'
@@ -20,13 +21,24 @@ export default function TutorHome({ profile }: { profile: Profile }) {
     const a: Record<string, Assignment[]> = {}
     for (const c of profile.children) { m[c.id] = await getMastery(c.id); a[c.id] = await listAssignments(c.id) }
     setSkills(m); setAssigns(a)
-    if (FEATURE_AI_GRADING) setPending(await getPendingGrades())
+    if (FEATURE_AI_GRADING) { setPending(await getPendingGrades()); setPendingAssign(await getPendingAssignments()) }
   }, [profile.children])
   useEffect(() => { void load() }, [load])
 
   async function approve(proposalId: string, override?: string) {
     const { error } = await approveGrade(proposalId, override)
     setFlash(error ? `Could not record: ${error.message}` : override ? 'Grade recorded (overridden) ✓' : 'Grade recorded ✓')
+    void load()
+  }
+  async function approveAssign(proposalId: string) {
+    const { error } = await approveAssignment(proposalId)
+    setFlash(error ? `Could not deliver: ${error.message}` : 'Assignment delivered ✓')
+    void load()
+  }
+  async function generate(childId: string) {
+    setFlash('Generating…')
+    const r = await generateAssignment(childId)
+    setFlash(r?.proposal_id ? 'AI drafted an assignment — review below' : 'Could not generate')
     void load()
   }
 
@@ -75,6 +87,31 @@ export default function TutorHome({ profile }: { profile: Profile }) {
         </Panel>
       )}
 
+      {FEATURE_AI_GRADING && pendingAssign.length > 0 && (
+        <Panel data-testid="pending-assignments" style={{ background: 'var(--gold-soft)' }}>
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-warning-text"><Icon name="Sparkles" size={16} /></span>
+            <span className="text-xs font-bold uppercase tracking-wide text-warning-text">Pending AI assignments</span>
+            <span className="ml-auto text-xs text-muted-foreground">AI drafts · you deliver</span>
+          </div>
+          <ul className="flex flex-col gap-3">
+            {pendingAssign.map((p) => (
+              <li key={p.id} className="rounded-xl border border-border bg-card p-3">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="text-sm font-bold text-foreground">{childName(p.child_id)}</span>
+                  <span className="text-sm text-muted-foreground">{p.payload.title}</span>
+                  <span className="ml-auto text-xs text-muted-foreground">~{Math.round((p.payload.predicted_p ?? 0) * 100)}% target · AI · {p.payload.model}</span>
+                </div>
+                <ul className="mb-2 flex flex-wrap gap-1.5">
+                  {(p.payload.items ?? []).map((it, i) => <li key={i} className="rounded-lg bg-surface-muted px-2 py-1 text-xs text-foreground">{it.prompt}</li>)}
+                </ul>
+                <button type="button" onClick={() => approveAssign(p.id)} className="min-h-9 w-full rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground">Deliver to student</button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
       {profile.children.map((c) => {
         const skills = skillsByChild[c.id] ?? []
         const canWrite = !!profile.canWrite[c.id]
@@ -105,6 +142,11 @@ export default function TutorHome({ profile }: { profile: Profile }) {
                   <button type="button" onClick={() => grade(c.id, 'reviewed')} className="min-h-10 flex-1 rounded-full border border-border text-sm font-semibold text-foreground hover:bg-surface-muted">Mark reviewed ✓</button>
                   <button type="button" onClick={() => grade(c.id, 'needs-work')} className="min-h-10 flex-1 rounded-full border border-border text-sm font-semibold text-foreground hover:bg-surface-muted">Needs work</button>
                 </div>
+                {FEATURE_AI_GRADING && (
+                  <button type="button" onClick={() => generate(c.id)} className="flex min-h-10 items-center justify-center gap-1.5 rounded-full border border-border text-sm font-semibold hover:bg-surface-muted" style={{ color: 'var(--accent-purple)' }}>
+                    <Icon name="Sparkles" size={15} /> Generate AI assignment
+                  </button>
+                )}
                 {(assignsByChild[c.id]?.length ?? 0) > 0 && <p className="text-xs text-muted-foreground">{assignsByChild[c.id].length} assignment(s) sent</p>}
               </div>
             )}

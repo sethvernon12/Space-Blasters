@@ -23,9 +23,19 @@ function mockGrade(inp: GradeInput): string {
   return `Not quite on ${inp.skill_display}. You answered ${inp.submitted_answer}; the answer is ${inp.correct_answer}. Let's review this one together — you're close!`
 }
 
+export interface AssignmentInput { skill_display: string; item: { operator: string; operands: number[] } }
+function mockAssignment(inp: AssignmentInput): string {
+  const [a, b] = inp.item.operands ?? [0, 0]
+  const sym = inp.item.operator === '+' ? '+' : inp.item.operator === '-' ? '−' : '×'
+  // wording only — the math + answer come from SQL/solver. No skill-name number
+  // (it would trip verify, which allows only the operands).
+  return `Blast it: what is ${a} ${sym} ${b}? 🚀`
+}
+
 function mockGen(task: string, input: unknown): GenResult {
   const text = task === 'summary' ? mockSummary(input as SummaryInput)
-    : task === 'grade' ? mockGrade(input as GradeInput) : ''
+    : task === 'grade' ? mockGrade(input as GradeInput)
+    : task === 'assignment' ? mockAssignment(input as AssignmentInput) : ''
   return { text, provider: 'mock', model: 'deterministic-v1' }
 }
 

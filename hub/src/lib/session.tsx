@@ -42,7 +42,10 @@ async function loadProfile(uid: string, email: string): Promise<Profile> {
   if (mine) return { role: 'child', uid, displayName: mine.nickname, children: [mine], canWrite }
   const asParent = children.filter((c) => c.parent_id === uid)
   if (asParent.length) return { role: 'parent', uid, displayName: label, children: asParent, canWrite }
-  return { role: 'tutor', uid, displayName: label, children, canWrite } // remaining visible = granted
+  // tutor ONLY if actually granted; a brand-new Google adult (no children, no
+  // grants) is a parent with an empty roster — never mis-classified as a tutor.
+  if (grants.some((g) => g.active)) return { role: 'tutor', uid, displayName: label, children, canWrite }
+  return { role: 'parent', uid, displayName: label, children: [], canWrite }
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {

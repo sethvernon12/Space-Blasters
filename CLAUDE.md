@@ -1,3 +1,7 @@
+# GOVERNANCE — SOURCE OF TRUTH (READ FIRST)
+The build's source of truth is **`docs/SPEC.md`** (the numbered, buildable specification — cite requirements by ID, e.g. SEC-02, LEG-03, DM-11, RM-07). It is governed by **`docs/ONE_PAGE.md`** (the distilled contract).
+**Governance order: `docs/ONE_PAGE.md` > `docs/SPEC.md` > everything else** (including this file and all other repo docs). If any doc disagrees with THE ONE PAGE, THE ONE PAGE wins and the other doc gets fixed. Amend by first-principles review, never by drift. This CLAUDE.md holds operating guardrails; the SPEC holds what we build.
+
 # NON-NEGOTIABLE — READ FIRST
 This is a LIVE production app with REAL CHILDREN'S DATA, and you run with elevated permissions — so YOU are the last safety check. Act conservatively. STOP and get my explicit "yes" in chat BEFORE any of these; never self-approve; if unsure, treat it as on the list and ask:
 1. Any write to the PRODUCTION database (apply_migration, non-SELECT execute_sql, schema changes, any DELETE/UPDATE/TRUNCATE).
@@ -75,7 +79,7 @@ Phase 0 — Groundwork (before any hub production work): separate Supabase DEV p
 9. Full paid-tier gating + polish.
 
 # STACK FACTS
-Single index.html game (live). Supabase project ref oafovcrxdjoyaxsytyjg (players table + leaderboard RPCs; publishable key safe client-side). GitHub sethvernon12/Space-Blasters. Vercel auto-deploys main on push — which is why hub work goes through branches + previews. Domain smartergames.ai. Do NOT re-run any old deploy/create-repo/attach-domain steps — the site is already live.
+Single index.html game is LIVE in production (its one-time repo/deploy/domain setup is DONE — never re-run it; the old deploy runbook has been removed). PROD Supabase project ref `oafovcrxdjoyaxsytyjg` (players table + leaderboard RPCs; publishable key safe client-side) — NEVER touch it from any tool or agent. Pushing to `main` reaches the live site, which is why all hub work happens on branches and is proven LOCAL-first; promotion/staging is a gated step per `docs/SPEC.md` (SEC-08 hosting gates, SEC-09 staging = synthetic data only, RM-10). DEV Supabase ref for hub work is `appplvbgyghlhrjcaagn` (never prod).
 
 ---
 

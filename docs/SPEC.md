@@ -1,0 +1,427 @@
+# SPECIFICATION — The Veritas Learning Hub & THE ALL-AROUND ATHLETE ACADEMY Operating System
+*Master specification, v1.0 — July 6, 2026. Structorion LLC / The All-Around Athlete Academy (501(c)(3)).*
+
+**How to use this document.** This is the complete, buildable specification, written from first principles. Its parents are two documents that govern it: **THE ONE PAGE — Spec Source of Truth** (the distilled contract) and the **AI-Native Next-Steps Plan §1–22** (the reasoned record). If this spec and THE ONE PAGE ever disagree, THE ONE PAGE wins and this spec gets fixed. Requirements are numbered (SHALL-style) and stable — cite them by ID. The standing acceptance rubric (§20) applies to every feature: the five questions must be answerable *by construction*.
+
+**Contents:** 1 Vision & Mission · 2 Users, Roles & Permissions · 3 The Five Portals · 4 Academy Operations · 5 Domain Model (Five Primitives) · 6 The Kernel · 7 The AI Layer · 8 Data & Capture Spine · 9 Extensibility & Integration · 10 The Derivation Engine · 11 Media & Moments Pipeline · 12 Communication · 13 Scheduling & Attendance · 14 The Games Arcade · 15 Child Safety & Trust · 16 Compliance & Legal · 17 Security Architecture · 18 Non-Functional Requirements · 19 Build State & Roadmap · 20 Acceptance Criteria
+
+---
+
+## 1. Vision & Mission
+
+One foundation, two mandates. This product is the **AI-native learning hub for homeschool families** and, unchanged, the **operating backbone of THE ALL-AROUND ATHLETE ACADEMY, a 501(c)(3) nonprofit academy**. Both rest on one first-principles fact: a family, a class, a team, and a co-op are the same primitive — a group of individuals wanting to learn the same thing.
+
+Build philosophy — **the mall and the vault**: we construct first-principles shells (groups, roles, capture, safety, derivations); the people who join fill them with their own life. Build the few right things once; never wire a floor before it is needed; no rebuild between one family and thousands, each perfectly private from every other.
+
+Purpose — **formation**: helping children grow into their God-given potential — faithful in the little things, prepared to create value for others — across four pillars (academics, athletics, entrepreneurship, emerging technology), with character and faith throughout. The software exists to make the adults around a child — parent, tutor, coach, and a bounded AI assistant under them — maximally effective, with **nothing wasted**: every bit of a child's work is captured once, as AI-readable structure, and serves everyone who should rightly benefit from it.
+
+**Product in one sentence:** a family-private, AI-native formation hub in which each moment of a child's work is captured once and made to serve every adult who helps that child grow — and which, with no rebuild, runs an entire academy.
+
+## 2. Users, Roles & Permissions Model
+
+**ROLE-1.** Every participant — human or AI — SHALL exist as exactly one **Actor** record. Role SHALL never be a property of the Actor; an Actor holds role-instances only through **Grants**. A new role is a label on a grant, never new code or a new table.
+
+**ROLE-2.** A Grant SHALL be a scoped, revocable, provenance-stamped edge: grantor → grantee → child → role label (+ optional domain) → capabilities → consent event. Consent SHALL be an attribute of the grant; background-check and expiry SHALL be evaluable preconditions on it. Issuance and revocation SHALL each be logged as explicit parental-disclosure consent events; revocation takes effect immediately.
+
+**ROLE-3.** **Parent** SHALL hold ultimate authority via an implicit grant over their own children: unrestricted visibility into everything sent to or about their child (a structural read-rule in `authorize()`), sole power to issue and revoke all other grants, and final approval over anything AI-proposed or safety-held.
+
+**ROLE-4.** **Student-athlete (child)** SHALL see only themself. Their raw work is immutable — appendable, never editable; their real name is structurally un-emittable to any AI; no private adult-child channel can be constructed.
+
+**ROLE-5.** **Tutor/guide and coach** SHALL be the same role shape under different domain labels (tutor-with-class ≡ coach-with-team). On granted children only, they hold full teaching power — assign, grade (including overriding AI), annotate, give feedback, upload materials, record Moments — always as additive, provenance-stamped, immutable artifacts. They SHALL never mutate raw attempts, hand-write derived mastery, touch the consent ledger, or reach across children, families, billing, or identity.
+
+**ROLE-6.** **Follower/sponsor** SHALL be the narrowest role: parent-invited, seeing only artifacts with visibility=followers, able to record non-binding giving intent, revocable instantly.
+
+**ROLE-7.** **Academy admin/operator** SHALL hold grants scoped to Academy groups and operations (enrollment, seasons, rosters, requirements, messaging administration, compliance status). Absent an explicit parent grant, the admin SHALL NOT see a child's learning content.
+
+**ROLE-8.** **The AI** SHALL be a bounded participant: an Actor holding a Grant with an `owner_actor_id` (an accountable human); its only input is the PII-stripped context pack; its only writes are proposal events behind human approval (never derived mastery); its kill-switch is grant status (active/suspended/revoked) honored by `authorize()` — instant, total revocation.
+
+**ROLE-9.** Every privileged action by any role SHALL pass the single fail-closed `authorize()` gate, where consent, grant scope, family isolation, and parent-in-the-loop are default-deny preconditions. A missing consent blocks even the parent. Every privileged action is audited append-only.
+
+## 3. The Five Portals
+
+Each portal is a **view over the one foundation** — the five primitives (Actor, Grant, Group+Membership, Event, Artifact) guarded by the kernel — never a separate system. Every portal read and write SHALL pass through the seven-function service layer and `authorize()`; no portal touches raw tables or models directly.
+
+### 3.1 Parent Portal
+
+*The parent's single pane of authority: awareness, approval, consent, and curation for all their children at once.*
+
+**PAR-1.** SHALL present an all-children dashboard: per-child progress across the four pillars, recent activity, and every item awaiting parent action.
+
+**PAR-2.** SHALL deliver automatic AI progress summaries with zero clicks: generated through the full kernel (context pack → gateway → moderation → audit), name-free at generation (opaque child id; the UI re-binds the name at render), read-only (writes nothing, alters no mastery), and honestly provenanced — labeled AI-generated, model/prompt version stamped, mastery shown with uncertainty.
+
+**PAR-3.** SHALL give the parent unrestricted visibility into everything sent to or about their child — messages, feedback, grades, Moments, comments — via the structural parent-read rule; no content path to a child can exclude the parent.
+
+**PAR-4.** SHALL surface AI triage flags (red/orange/green) on content flowing to their child — advisory only; the parent decides; the AI is never an autonomous gatekeeper.
+
+**PAR-5.** SHALL provide one approvals queue — AI pre-grades, AI-proposed assignments, flagged content, held comments — with one-tap approve/override; nothing AI-proposed becomes record or becomes child-visible without a human approval event.
+
+**PAR-6.** SHALL provide consent and grant management: invite tutor/coach/follower via single-use revocable links (an invite link constitutes parent approval, and only a parent can issue one); revoke any grant instantly; every change logged as its own consent event.
+
+**PAR-7.** SHALL support one-upload-many-destinations: a single upload fans out automatically to every destination its visibility scope implies (e.g., meet footage → the coach's queue AND, if parent-chosen, the Follow Me page); public destinations are always parent-curated.
+
+**PAR-8.** SHALL show a unified calendar of all children's groups — classes, practices, meets, due dates — auto-derived from memberships.
+
+**PAR-9.** SHALL show forms, waivers, and payment status per child, with outstanding requirements surfaced.
+
+**PAR-10.** SHALL offer opt-in to the Oklahoma tax-credit deadline track (ACAD-7).
+
+### 3.2 Student-Athlete Portal
+
+*The child's joyful home for all learning and training — celebration, never shame.*
+
+**STU-1.** SHALL show the child only themself, fail-closed; asymmetric visibility SHALL hold everywhere: the child sees only cleared content, and nothing discouraging reaches them unless a human chose it.
+
+**STU-2.** SHALL be joyful and age-appropriate: Veritas-light visual identity, icon-forward with low reading load, read-aloud prompts, minimum 48px touch targets, age-tiered shell (3–5 / 6–8 / 9–12), iPad-first and desktop-capable.
+
+**STU-3.** SHALL open on Today's Plan: one derived "what's next" view across pillars.
+
+**STU-4.** SHALL provide an assignments inbox → in-progress → done flow; every submission captured as structured attempt/artifact data through `recordAttempt` — never lost, never opaque.
+
+**STU-5.** SHALL host the GAMES ARCADE: every game is a diagnostic instrument emitting the standard skill-tagged AttemptEvent (actual raw answer, response_ms, context); a new game is a manifest plus that event, never a schema fork; timed/game evidence SHALL never satisfy an understanding/transfer gate.
+
+**STU-6.** SHALL provide practice modules by modality fit (manipulatives, worked-example video, Pencil work): fluency from games, concept formation elsewhere.
+
+**STU-7.** SHALL frame progress as growth and celebration: no dark patterns (no loss-aversion streaks, fake timers, or engagement loops); feedback, never punishment.
+
+**STU-8.** SHALL present received Moments — tutor/coach ink-and-voice walkthroughs — pinned to the exact piece of work they explain.
+
+**STU-9.** SHALL show the child's own schedule derived from group memberships.
+
+**STU-10.** SHALL bind all messaging to purpose: every child-visible message carries a required `context_ref` (a contextless message is unrepresentable); channels derive from group membership; the guardian is a structural co-member of every channel the child is in — a private adult-child room has no constructor.
+
+### 3.3 Tutor Portal
+
+*Makes a trusted teaching adult maximally effective over granted students and class groups.*
+
+**TUT-1.** SHALL list my students and my groups — granted children only; a class is a group, nothing more.
+
+**TUT-2.** SHALL assign work to an individual or a group in one action; group assignment fans out per member automatically.
+
+**TUT-3.** SHALL maintain a review queue of submitted work, ordered by need for attention.
+
+**TUT-4.** SHALL show an AI-TA pre-grade on every submission with one-tap approve or override; no grade is recorded without the human; numeric correctness always defers to the deterministic solver.
+
+**TUT-5.** SHALL support annotation, markup, and written feedback as additive, provenance-stamped, immutable artifacts; the child's raw work is never altered.
+
+**TUT-6.** SHALL record Tutoring Moments: synced voice + Pencil ink over the exact missed problem, captured as structured data (timestamped strokes + transcript + skill/gap references — never an opaque video blob), pinned to that attempt, routed to child and parent.
+
+**TUT-7.** SHALL accept AI-authored walkthroughs into the same Moment slot, visible to the child only after tutor approval.
+
+**TUT-8.** SHALL allow the AI to review tutor explanations for accuracy and flag privately to tutor/parent — advisory, never child-visible, never overriding the tutor's authority.
+
+**TUT-9.** SHALL provide per-student analytics: mastery with uncertainty, misconception evidence, predicted gaps.
+
+**TUT-10.** SHALL keep every child-involving message structurally parent-in-the-loop and purpose-bound per STU-10.
+
+**TUT-11.** SHALL support uploading worksheets and materials to granted children or groups.
+
+### 3.4 Coach Portal
+
+*The identical teaching shape in the athletic domain — a coach with a team is a tutor with a class.*
+
+**COA-1.** SHALL be the same portal shape as the Tutor Portal (roster, assign, review, Moments, analytics, messages) with athletic labels; no coach-specific schema or parallel system SHALL exist.
+
+**COA-2.** SHALL manage team rosters (team ≡ group).
+
+**COA-3.** SHALL manage practice/meet schedules that auto-propagate to every athlete's parent calendar via membership.
+
+**COA-4.** SHALL provide a technique-video library the coach assigns as athletic homework to individuals or teams; completion is captured as events.
+
+**COA-5.** SHALL present a received-footage queue: parent-uploaded match/tournament footage routes to the coach automatically (PAR-7).
+
+**COA-6.** SHALL record Coaching Moments over footage: tap record → talk over the video → pause and draw with the pencil → submit → auto-routes to that athlete and their parent with visibility sent-to-child-private. Coaching Moments SHALL NEVER be public and SHALL never appear on Follow Me; playback only via access-controlled, signed, expiring links; annotation strokes and transcript stored as structured data in the capture layer.
+
+**COA-7.** SHALL capture attendance as invariant-grade, append-only events that double as the compliance record.
+
+**COA-8.** SHALL show per-athlete analytics: assigned vs. completed homework, attendance, and Moment follow-ups.
+
+### 3.5 Follow Me Page
+
+*A parent-curated public showcase per child, where invited family and friends follow real work and may support the Academy.*
+
+**FOL-1.** SHALL exist per child only when the parent enables it; default private; every element parent-curated and individually parent-deletable.
+
+**FOL-2.** SHALL auto-populate downstream from the capture spine: any artifact or achievement the parent scopes visibility=followers appears with no second upload.
+
+**FOL-3.** SHALL expose no full name, location, or identifying information by default.
+
+**FOL-4.** SHALL admit followers only via parent-issued invite links (the link is the parent approval); links single-use and revocable; no guessable public URLs; any follower removable instantly.
+
+**FOL-5.** SHALL route sponsorship giving to the nonprofit's own Stripe account and record only the donor's non-binding stated intent (child page + optional note). The app SHALL NEVER allocate, move, earmark, or disburse funds; no allocation ledger SHALL exist.
+
+**FOL-6.** SHALL disclose at giving, in attorney-reviewed wording: the gift supports the Academy's program; the Academy intends to use it to help the named child but retains full discretion; no individual allocation is guaranteed.
+
+**FOL-7.** SHALL run comments through hold-for-parent: all comments flow to the parent with AI sentiment flags; only clearly positive comments become child-visible automatically; anything potentially discouraging is held/blurred pending parent approval; the commenter is never publicly shamed; the parent may delete any comment or remove any follower.
+
+**FOL-8.** SHALL guarantee the child never sees uncleared negativity — enforced by the visibility structure (FOL-7 + STU-1), not by moderation promises.
+
+## 4. Academy Operations (the Admin Layer)
+
+*The Academy runs entirely on the same primitives: groups with purpose and season, requirement-sets as data, events as compliance records.*
+
+**ACAD-1.** Enrollment SHALL be one guided path: a new family walks account → child profiles → program selection → required documents → waivers → payment status in a single flow, driven by requirement-sets — never a hand-built checklist.
+
+**ACAD-2.** Seasons and programs SHALL be groups carrying purpose and season; requirement-sets SHALL be rules keyed by (purpose × role × season) that auto-instantiate as per-member requirement events (assigned → completed) at the moment of joining.
+
+**ACAD-3.** Rosters SHALL derive from memberships; joining a group auto-derives channels, parent-in-the-loop, consent requirements, documents, schedules, and per-child records — opt-out, not opt-in; the Academy never asks for what membership already implies.
+
+**ACAD-4.** Waiver/e-sign SHALL implement assign → sign → track → store per family/child, capturing ESIGN/UETA-grade evidence (intent + consent + who/when/document-version audit trail). All waiver and legal content SHALL be attorney-authored; the software only assigns, stores, and tracks.
+
+**ACAD-5.** Compliance dashboards SHALL show per-family and per-group outstanding requirements, signature status, attendance-as-compliance, and expirations, with missing-item alerts and renewal reminders generated from the same requirement events.
+
+**ACAD-6.** The Oklahoma Parental Choice Tax Credit helper SHALL, if a family opts to share household income, show an eligibility estimate clearly labeled a non-guaranteed illustration, computed from the current published program tiers — verified each year, never hardcoded, never presented as tax advice.
+
+**ACAD-7.** Families who plan to apply SHALL be auto-enrolled in a deadline notification track stating exactly what to do and by when, whether or not they used the estimate.
+
+**ACAD-8.** Group messaging administration SHALL manage channels derived from membership (never hand-built rosters), purpose-bound per STU-10; child-involving channels inherit the full safety posture; administration SHALL never bypass parent visibility.
+
+**ACAD-9.** Every admin action SHALL be audited append-only; admin visibility is limited to operational and compliance state per ROLE-7.
+
+## 5. Domain Model — The Five Primitives
+
+The entire product SHALL reduce to five primitives guarded by one kernel (§6). Every feature ships as a label, view, scope, event-kind, or prompt-version over these five — never a new person-type, content silo, or parallel log.
+
+### 5.1 Actor
+- **DM-1** Every person and agent — parent, child, guide/tutor, coach, follower/sponsor, specialist, AI-worker, system — SHALL be one record in a single `actors` table. Per-role person tables SHALL NOT exist.
+- **DM-2** Role SHALL NOT live on the Actor. An Actor holds role-instances only via Grants; a coach is a tutor-shaped grant with `domain = athletics`, not new code.
+
+### 5.2 Grant
+- **DM-3** All authority SHALL be a Grant: a scoped, revocable, provenance-stamped edge (grantor → grantee → child → role/domain → capabilities incl. `can_write`).
+- **DM-4** Consent SHALL be an attribute of the Grant (a reference to an immutable consent Event), never a separate system; background-check status and expiry SHALL be preconditions evaluated on the Grant at authorization time.
+- **DM-5** Grants SHALL be revocable instantly; `authorize()` SHALL honor grant status (active/suspended/revoked) on every call. This one mechanism is the kill-switch for humans and AI alike.
+- **DM-6** A parent SHALL hold an implicit grant over their own children; every other actor requires an explicit one. Family isolation is the absence of any grant path — default deny, zero cross-family leakage.
+
+### 5.3 Group + Membership
+- **DM-7** Family, class, team, academy, and follower-circle SHALL be one Group primitive distinguished only by first-class `group_kind` (purpose); the single derivation engine dispatches on purpose — one engine, not six features.
+- **DM-8** Membership SHALL auto-derive everything: communication channels, parent-in-the-loop co-membership, consent requirements, required documents, schedules, and per-child records. One join fans out automatically; opt-out, not opt-in.
+- **DM-9** Requirement-sets SHALL be data keyed by (purpose × role × season); on membership they auto-instantiate as per-member requirement Events (assigned → completed), powering onboarding, missing-item alerts, compliance, renewals, and the tax-credit deadline track from one rule engine.
+- **DM-10** A child's membership SHALL auto-derive the guardian's structural co-membership in every channel the child is in; a private 1:1 adult-child channel SHALL have no constructor — unbuildable, not merely forbidden.
+
+### 5.4 Event
+- **DM-11** There SHALL be exactly one append-only, authored, provenance-stamped Event log. Kinds include: `attempt`, `grade`, `attendance`, `completion`, `requirement`, `signature`, `consent`, `audit`, `payment_intent`, `flag`, `message` (extended only by CHECK-widen). `payment_intent` records non-binding donor intent only; the system SHALL never move, allocate, or earmark funds.
+- **DM-12** Events SHALL be immutable — no UPDATE/DELETE by anyone including parent, tutor, AI, or system (trigger-enforced). Corrections are new events.
+- **DM-13** Derived state (mastery, compliance, "what's next") SHALL always be recomputed from the log by deterministic code; no actor may hand-write a derived number.
+- **DM-14** A message SHALL be an Event with a required `context_ref`; a contextless message SHALL be unrepresentable. Channels are derived views of Group membership (DM-8, DM-10).
+
+### 5.5 Artifact
+- **DM-15** All content SHALL be one Artifact envelope: content + `visibility_scope` ∈ {private, family, followers, sent-to-child, internal-staff} + `storage_ref` + structured metadata. Artifacts are additive and provenance-stamped; appending never mutates a child's raw work.
+- **DM-16** Homework, annotations/markup, Tutoring/Coaching Moments (ink + voice transcript), videos, uploaded materials, signed waivers, comments, and Follow-Me showcase items SHALL all be Artifacts; all routing and publishing SHALL be governed solely by `visibility_scope` — one knob.
+
+### 5.6 Reuse table — what collapses into what
+- **DM-17** The following collapses are normative; no sixth primitive SHALL be added unless a chief-engineer review demonstrates the need cannot be expressed in these five.
+
+| Product surface | Collapses into |
+|---|---|
+| Parent / child / tutor / coach / follower / specialist / AI-worker | Actor + role-bearing Grant |
+| All permissions, consent, bg-check, expiry, AI kill-switch | Grant attributes + `authorize()` |
+| Family, class, team, academy, follower-circle; channels; rosters; compliance; tax-credit track | Group + Membership + requirement-sets |
+| Attempts, grades, attendance, signatures, consent, audit, payment intent, flags, messages | Event kinds |
+| Homework, markup, Moments, videos, waivers, comments, Follow-Me page | Artifact + `visibility_scope` |
+| One-upload-many-destinations | event bus over the membership graph |
+| Every AI touchpoint | the one AI gateway (§6–7) |
+
+## 6. The Kernel (enforcement layer)
+
+Representation is never enforcement. Every guarantee below is a fail-closed *precondition* that blocks the action — not a fact recorded afterward.
+
+- **KER-1** Seven locked functions — `recordAttempt`, `getMastery`, `generateAssignment`, `gradeWork`, `tutorTurn`, `exportChild`, `getEntitlement` — SHALL be the ONLY domain boundary for every surface (game, hub, AI, future API/MCP). Names and signatures are frozen; bodies may evolve. No surface SHALL touch domain tables directly; RLS remains the defense-in-depth backstop beneath the kernel, never the authorization story.
+- **KER-2** `authorize()` SHALL gate every privileged access and side-effect, default-deny: consent present-and-valid, grant active-and-in-scope (incl. bg-check/expiry), family isolation, and parent-in-the-loop are preconditions. A missing consent SHALL block even the parent. Absence of an explicit allow = deny.
+- **KER-3** Parent auto-visibility SHALL be one read-time rule inside `authorize()`: everything sent to or about my child surfaces to me.
+- **KER-4** `buildContextPack(child_id)` SHALL be the only input any AI receives: a whitelist projection over the log, opaque `child_id` only. The child's real/pilot/display name is structurally un-emittable — never selected, so it cannot leak (fail-closed by omission).
+- **KER-5** The AI gateway is the single model door (Edge Function, caller-JWT only; no service-role key in any client or autonomous agent). Inbound: per-provider ZDR/no-train posture SHALL fail closed — no signed agreement, no call. Outbound: `verify()` — a deterministic solver validates every numeric/mathematical claim, and the AI SHALL never assert an unverified number to a child — and `moderate()` SHALL screen every child-facing string.
+- **KER-6** Every privileged action SHALL append an audit Event (who/what/when, plus model and prompt version wherever AI was involved), with the same immutability as all Events.
+- **KER-7** Every AI write SHALL be a proposal requiring explicit parent/tutor approval before becoming record. Under no approval path may the AI write derived mastery or the consent ledger.
+- **KER-8** Standing acceptance rubric: every kernel change SHALL keep five questions answerable by construction — who is this actor (Actor); what may they do (Grant/`authorize()`); what should they do next (derived view); what evidence proves what happened (Event/audit); who is responsible (Grant provenance / `owner_actor_id`).
+
+## 7. The AI Layer — native but agnostic
+
+- **AI-1** The AI SHALL be a bounded participant, not a feature: an Actor holding a Grant with `owner_actor_id` (the accountable human). It reads only via `buildContextPack`, writes only proposal Events via the seven functions, scoped to one child per call — breadth is time-depth for one learner, never cross-sibling or cross-family.
+- **AI-2** Kill-switch: suspending or revoking the AI's grant SHALL instantly disable all AI action, because `authorize()` honors grant status on every call (DM-5). No separate mechanism exists or is permitted.
+- **AI-3** Teacher's-Assistant loop (the core loop): (a) every turned-in submission SHALL be auto-graded by AI via `gradeWork`; (b) no AI grade becomes record until a human approves or overrides it; (c) every recorded grade SHALL deepen the AI's per-child understanding via the event-sourced projections — never a private model memory; (d) the AI SHALL generate child-specific assignments where SQL picks skill + difficulty (targeting ~85% success), the LLM only renders the chosen template into friendly text, a deterministic solver validates every item, and a human approves before it reaches the child.
+- **AI-4** On any correctness dispute — AI vs. human tutor — the deterministic solver SHALL be the arbiter. The tutor's authority covers pedagogy and record approval, not arithmetic.
+- **AI-5** Progress summaries: the AI SHALL produce read-only, name-free parent progress summaries through the full kernel spine (the shipped proof-of-spine touchpoint). Summaries propose nothing and change no mastery.
+- **AI-6** Safety flags: the AI SHALL triage child-touching content (messages, comments, incoming artifacts) into red/orange/green advisory flags surfaced to the parent — an assistant, never police. It SHALL never autonomously block, delete, or publish; non-green content is held from the child's view until a human clears it, and nothing discouraging reaches a child unless a human chooses it.
+- **AI-7** The AI MAY review tutor/coach-authored explanations for accuracy and flag a suspected inaccuracy or missing core understanding to the tutor/parent — protecting the child without undermining the human's authority.
+- **AI-8** Future super-assistant (slot now, wire later): the AI SHALL be able to author narrated + annotated walkthrough Moments over a child's exact work — the same Artifact slot as human Tutoring/Coaching Moments, stored as structured ink + transcript, always human-approved before the child sees it.
+- **AI-9** Learning-games arcade as diagnostic instruments: every game (Space Blasters first) SHALL emit the one standard AttemptEvent into the same per-child understanding. Game/timed evidence feeds fluency/retrieval only and SHALL never satisfy the understanding/transfer gate.
+- **AI-10** Provider-agnostic: all model calls SHALL route through the one gateway with pluggable providers, versioned Markdown prompts (version stamped into audit), and a per-provider posture config (train? / retention / ZDR) that fails closed.
+- **AI-11** No provider without a signed no-train/ZDR agreement SHALL ever touch child-derived data; until one is signed, the gateway SHALL serve the deterministic mock provider.
+- **AI-12** On-device/local models SHALL be permitted behind the same gateway and posture config (local satisfies ZDR trivially) and gain no bypass of `verify()`, `moderate()`, or audit.
+- **AI-13** Model routing (cheap models for grading/summaries; frontier models for a stuck child) SHALL be a gateway concern, invisible to callers.
+- **AI-14** Child-submitted and OCR'd text SHALL be treated as untrusted input at the gateway (prompt-injection boundary).
+
+## 8. Data & Capture Spine
+
+- **DATA-1** Capture-everything: nothing that creates learning value may escape AI-ingestible capture. Every answer, grade, annotation, ink stroke, and spoken explanation SHALL be stored as structure at creation — timestamped ink strokes + voice transcripts + references to problem/skill/gap — never opaque video. External hosts hold raw pixels only; the structure is always ours.
+- **DATA-2** The AttemptEvent contract SHALL be frozen with a `context` JSONB escape hatch. Clients SHALL capture true `response_ms`, the actual (even wrong) raw answer, ASR transcript/confidence/n-best, structured problem DNA (operands/operator/template), and `elicitation_type`. Attempt data is the one thing that can never be backfilled.
+- **DATA-3** Projections are event-sourced: mastery SHALL be deterministic Beta(α,β) recomputed from the log. Labels (slip/guess/misconception) SHALL live in separate model-versioned tables, recomputable by replay; the client never writes labels. A misconception channel SHALL mine actual wrong answers.
+- **DATA-4** A reconciler SHALL replay-rebuild every projection from the log and diff against the stored copy; projections carry model version + high-water mark. Any divergence is a defect.
+- **DATA-5** `prediction_log`: every predicted p(correct) SHALL be logged against the actual outcome, feeding a calibration loop so the model measurably self-corrects.
+- **DATA-6** Cold-start priors SHALL be aggregate-only across families (population prior per skill/grade); no individual child's data ever crosses a family boundary.
+- **DATA-7** `exportChild` SHALL walk Events + Artifacts to a complete per-child export, parent-only via `authorize()`. Portability is structural: a family's record is un-trappable.
+- **DATA-8** Raw ink strokes SHALL be treated as biometric-grade (opt-in, off by default); rasterized images live in short-TTL private storage; structured per-step results are always retained.
+
+## 9. Extensibility & Integration
+
+- **EXT-1** Oversized-breaker-box doctrine: install cheap structural seams now (names, enums, empty tables, frozen signatures); wire no floor before it is needed. Every seam SHALL exist in schema/code even while unbuilt; no surface SHALL be built speculatively.
+- **EXT-2** Subject dimension: math SHALL be one subject/domain among many. The skills → attempts → mastery → misconception spine stays domain-general, so adding reading, science, or athletics is a data addition, never a schema fork.
+- **EXT-3** Module/game manifest contract: a new game or module SHALL ship as (a) a small manifest referencing existing skill IDs plus (b) emission of the one standard AttemptEvent — zero schema fork. Game #2 is a manifest and an event.
+- **EXT-4** Media storage SHALL be pluggable behind the Artifact envelope (`storage_ref`): the upload UX and visibility model are fixed in front; the backend is swappable. Private artifacts require access-controlled playback with signed, expiring links; link-anyone-can-view ("unlisted") is prohibited for private content.
+- **EXT-5** The future public API and admin MCP SHALL be thin wrappers over the same seven kernel functions — and SHALL NOT be exposed until external consumers exist (no consumers = pure attack surface).
+- **EXT-6** Plugin posture: third-party modules never receive direct table access or production-capable keys; they speak manifest + service layer only, inheriting `authorize()`, `moderate()`, and audit for free.
+- **EXT-7** One shared design-token file (the game's palette: warm orange/gold on deep navy + cyan; mint = success; rose = gentle-wrong) SHALL drive game and hub alike; new surfaces consume tokens, never fork palettes — one world, visually and structurally.
+
+## 10. The Derivation Engine (membership → everything)
+
+One engine, not six features. Joining a group is the single human act; the engine fans out everything membership rightfully implies — communication, parent-in-the-loop, consent requirements, documents, schedules, and per-child records — automatically, opt-out not opt-in. We never ask for what we already know.
+
+- **DER-01 (One membership graph).** The system SHALL maintain exactly one relationship graph — family ↔ child ↔ group (class / team / co-op / academy / follower-circle / family), with `guardian_of(parent, child)` edges as the spine. Every derivation, channel, compliance view, and calendar SHALL walk this graph; no feature SHALL keep a private roster copy.
+- **DER-02 (Purpose is first-class).** Every Group SHALL carry a `purpose` attribute (`class`, `team`, `academy`, `follower_circle`, `family`, …). The ONE derivation engine SHALL dispatch declarative rules on purpose; per-feature code forks are prohibited.
+- **DER-03 (Transactional bus + idempotent outbox).** Every membership change (join, leave, role change, season roll) SHALL be written as a domain Event in the same transaction as the state change and enqueued to an idempotent outbox. A drain worker SHALL execute derivations exactly-once-in-effect (idempotency keys; safe retries; resumable partial failure). Derivations SHALL never run as untracked side-effects in request handlers.
+- **DER-04 (Rules are data).** Derivation rules SHALL be versioned data (`on membership(purpose, role, season) ⇒ [obligations]`), not scattered code. A new group type or obligation SHALL be a data change, not a schema or code fork.
+- **DER-05 (On-join: channels).** Joining a group SHALL derive channel membership in that group's channels; for every child member, each guardian SHALL be derived as a structural co-member (see COM-03). Coaches/guides are derived into channels of groups they lead.
+- **DER-06 (On-join: requirement-sets).** Requirement-sets keyed by (purpose × role × season) SHALL auto-instantiate on membership as per-member open requirement Events (waiver, enrollment form, policy signature, document upload, task) with an assigned → completed lifecycle. This ONE mechanism SHALL power onboarding, missing-item alerts, per-family compliance dashboards, renewal reminders, and the Oklahoma tax-credit deadline track.
+- **DER-07 (On-join: schedules).** A child's group schedule Events SHALL appear on every guardian's calendar automatically (derived union, SCH-02), with zero parent action.
+- **DER-08 (On-join: records).** Membership SHALL open the member's per-group record stream (attendance, assignments, grades, filed Artifacts) with no manual setup; the filing cabinet is the Artifact set indexed by this graph.
+- **DER-09 (Parent-auto-tag = one read-time rule).** "Everything about my child surfaces to me" SHALL be implemented as a single read-time rule inside `authorize()`: a `guardian_of` edge grants the guardian read over all Events and Artifacts scoped to that child (including everything sent to the child). It SHALL never be implemented by copying or fanning out rows per parent.
+- **DER-10 (Opt-out = suppression, never deletion).** All derivations default ON. Opting out (mute, hide, decline) SHALL write a suppression row (actor, target, scope, timestamp) consulted at read/notify time; the derived record itself SHALL never be deleted. Un-suppression restores instantly; the audit trail is preserved.
+- **DER-11 (Fail-closed consent gating).** Every derived side-effect SHALL pass the fail-closed `authorize()`/consent gate before executing. A missing consent SHALL block the derivation into a held-pending state surfaced to the responsible adult — never silently skip, never silently proceed. Consent is a precondition, not a recorded fact.
+- **DER-12 (Idempotent, auditable, reversible).** Every derivation SHALL be replay-safe, SHALL emit audit Events (trigger event, rule version, outputs), and SHALL be reversed on leave/revocation by compensating events (channel membership withdrawn, open requirements cancelled, future calendar entries removed) — never by destructive deletion of history.
+
+## 11. One-Upload-Many-Destinations & the Media/Moments Pipeline
+
+One human action fans out to every rightful destination; every byte of teaching value is captured as AI-readable structure; private child content is structurally unleakable.
+
+- **MED-01 (Media artifact envelope).** Every media item SHALL be an Artifact = `{storage_ref, visibility_scope, structured_metadata}`, with `visibility_scope ∈ {public-followers, family, sent-to-child-private, internal-staff, private}`. This one knob governs all routing, publishing, and viewing.
+- **MED-02 (Pluggable, access-controlled storage).** The storage backend SHALL be pluggable behind the upload/playback seam (private object storage or a private video host of the Mux/Cloudflare Stream class). Playback of any non-public content SHALL use signed, expiring, per-viewer links only. "Unlisted"/link-anyone-can-view URLs are PROHIBITED for `sent-to-child-private`, `internal-staff`, and `family` content — a forwardable link is a leak, not privacy.
+- **MED-03 (Structured data stays ours).** Transcripts, ink strokes, annotations, AI flags, and refs SHALL live in the system's own database regardless of where raw pixels are hosted; the external host holds pixels only.
+- **MED-04 (One-upload fan-out).** The single upload flow SHALL capture the parent's visibility decision once (default private for any minor's content) and then fan out via the derivation engine/outbox to every destination consistent with that scope — e.g., tournament footage: (a) auto-published to the child's Follow Me page (followers scope; the parent's scope choice at upload IS the curation) AND (b) auto-routed to the coach's review queue (internal-staff). The parent SHALL never perform a second action to reach a second rightful destination.
+- **MED-05 (The Moments recording spec).** A Moment SHALL be a record-over session by a trusted adult on an underlying artifact — coach over game footage; tutor over a homework page. The author taps record, talks, pauses/scrubs, and draws with pencil ink; the session SHALL capture one synchronized, timestamped stream: `{ink strokes, audio + transcript, playhead/page state, refs → attempt/problem/skill/gap}`, pinned to the exact work it re-teaches.
+- **MED-06 (Never opaque video).** The source of truth for a Moment SHALL be that structured stream, never a flattened video blob. A rendered video MAY be derived for playback convenience but is a disposable cache, not the record.
+- **MED-07 (Submit → sent-to-child-private, never public).** On submit, a Moment SHALL auto-route with scope `sent-to-child-private` to exactly the subject child and their guardians. Moments SHALL be structurally excluded from followers/public scopes: no publish code path exists for this artifact class.
+- **MED-08 (AI-authored Moments, same slot).** The AI MAY later author Moments of the identical structured shape into the SAME artifact slot, stamped `ai_authored` with model/prompt version, and SHALL require explicit human approval (tutor/coach or parent) before becoming child-visible. Same schema, different author; the human remains the authority.
+- **MED-09 (The flywheel and the reviewer).** Because Moments are structure, they SHALL be ingestible through `buildContextPack` (PII-stripped) so the AI learns the walkthrough form; the AI MAY review human-authored Moments for accuracy and raise advisory flags to the tutor/parent — never to the child, never overriding the human.
+- **MED-10 (Retention tiers).** Three tiers SHALL apply: structured results (Moment stroke/transcript streams, per-step grading outcomes, metadata) — retained always; rasterized page/frame images — private bucket, short TTL, scheduled audited deletion; a child's raw ink from their own work — treated as biometric-adjacent: opt-in, off by default.
+- **MED-11 (Kernel path).** Every upload, route, publish, and playback of child-related media SHALL pass fail-closed `authorize()` and emit audit Events. Follower revocation is instant and SHALL invalidate future signed links.
+
+## 12. Communication (safety infrastructure by construction)
+
+Safety is structural, not moderated-after-the-fact: the dangerous room cannot be built, the contextless message cannot be written, and nothing discouraging reaches a child unless a human chooses it.
+
+- **COM-01 (Message = context-welded Event).** A message SHALL be an Event with a REQUIRED `context_ref` to a domain object (assignment, lesson, schedule event, artifact/document, requirement). A contextless message SHALL be unrepresentable in the schema — no nullable ref, no "general" escape hatch. All communication is purpose-bound by construction.
+- **COM-02 (Channel = derived view).** Channels SHALL exist only as derived views of Group membership, materialized exclusively by the derivation engine (DER-05). No API or UI SHALL exist to hand-create a channel or hand-edit a channel roster.
+- **COM-03 (No private adult-child room CAN exist).** Because every child membership derives every guardian as a structural co-member of every channel the child is in, a 1:1 adult-child room has no constructor. This is an impossibility, not a policy.
+- **COM-04 (Auto-derived group messaging).** Team/class channels SHALL appear automatically from rosters — child on a team ⇒ guardians in the team channel; leaders in their groups' channels — with GroupMe-familiar UX and zero manual roster building. Leaving/muting is suppression (DER-10); a guardian's structural co-membership is never removable while the child is a member.
+- **COM-05 (Announcements vs threads).** Channels SHALL support leader-authored announcements (broadcast; reply policy per group purpose) and contextual threads anchored on a `context_ref` — both the same message Event kind with different attributes.
+- **COM-06 (Asymmetric visibility).** Guardians SHALL see all messages and comments visible to or concerning their child (via the DER-09 read rule). A child SHALL see only cleared content: clearly positive content auto-clears; anything flagged negative/concerning SHALL be held/blurred from the child pending guardian approval. No hard-ban at post time; the commenter is never publicly shamed; the parent may delete any comment and remove any follower.
+- **COM-07 (AI flags as Events).** Every child-visible or child-authored message SHALL pass AI sentiment/safety triage emitting a flag Event (green/orange/red; model+prompt version stamped). Flags are advisory: the AI SHALL never block, delete, or reply autonomously.
+- **COM-08 (Severity-routed escalation).** Flag Events SHALL route by severity: guardian always; orange/red additionally to a designated human safety-reviewer (Academy role) per severity policy. A human decides every outcome; every decision is itself an Event.
+- **COM-09 (Full audit; portable).** Messages, flags, holds, releases, and decisions SHALL be append-only Events (edits as new versions, deletions as tombstones preserving audit). `exportChild` SHALL include the child's communication record.
+- **COM-10 (Kernel path).** Every send and read SHALL pass fail-closed `authorize()` (grant scope, family isolation, consent, visibility). AI triage SHALL read only via `buildContextPack` (child name un-emittable) through the AI gateway (no-train/ZDR fail-closed; `moderate()` on any child-facing string).
+
+## 13. Scheduling, Attendance & Calendars
+
+- **SCH-01 (Schedules as Events/Artifacts).** A group's schedule SHALL be schedule Events owned by the group — one-off and recurring sessions (recurrence rules), with venue/notes metadata and optional attached Artifacts (practice plan, lesson sheet).
+- **SCH-02 (Parent calendar = derived union, never synced).** A guardian's calendar SHALL be a read-time derived view: the union of all their children's groups' schedule Events plus their own. There SHALL be no synced copies — one record, zero drift; a group change appears everywhere instantly.
+- **SCH-03 (RSVPs and changes as Events).** RSVPs, cancellations, and reschedules SHALL be append-only Events referencing the schedule Event; current status is a projection over the log.
+- **SCH-04 (Attendance is invariant-grade).** Check-in/check-out and attendance SHALL be append-only, provenance-stamped Events (who recorded, for whom, when, method). Corrections are compensating events, never edits.
+- **SCH-05 (Compliance double-life).** The same attendance/hours Events SHALL serve, with zero re-entry: (a) homeschool hours logs, (b) the safety/custody record of who had the child and when, (c) Academy attendance and compliance records — one capture, many derived reports.
+- **SCH-06 (Reminders via the drain).** All reminders (upcoming session, RSVP nudge, requirement and tax-credit deadlines) SHALL be produced by the scheduled-events drain over the outbox — idempotent, suppression-aware (DER-10), audit-logged. No feature-specific cron jobs.
+
+## 14. The Games Arcade (learning games as diagnostic instruments)
+
+- **ARC-01 (The Arcade).** The hub SHALL contain a Games Arcade — the child-facing "recess" section of learning games, Space Blasters first — living inside the hub, never as external links.
+- **ARC-02 (Fun AND instrument).** Every game SHALL be simultaneously joyful play and a structured capture device: every answer emits the standard AttemptEvent into the same event spine the AI reads. Nothing a child does in a game is wasted.
+- **ARC-03 (AttemptEvent completeness).** Game AttemptEvents SHALL carry: skill ref, problem DNA (template id, operands, operator), correctness, the actual answer given (including wrong answers), true per-problem `response_ms`, input method, and for voice input the ASR transcript, confidence, and n-best alternatives — plus a `context` JSON escape hatch. The client SHALL never write labels or mastery.
+- **ARC-04 (Never the understanding gate).** Games are fluency/retrieval engines only. Timed play SHALL never certify mastery: the understanding/transfer gate is structurally unwritable from game/timed contexts — an enforced write-path invariant, not a convention.
+- **ARC-05 (Zero schema fork).** A new game SHALL require exactly: a manifest (game id, referenced skill ids, age tier, entitlement) plus emission of the standard AttemptEvent. No new tables, no schema changes; the Arcade lists games from manifests.
+- **ARC-06 (One visual world).** Games and hub SHALL share the design-token system (palette, type, spacing, mascot pose set), and all child-UX rules bind every game: no dark patterns, age-tiered shells, accessibility (read-aloud, reduced motion, contrast), feedback never punishment.
+
+## 15. Child Safety & Trust (by construction)
+
+Every property in this section is a *structural invariant* — enforced by what the system can and cannot construct, never by policy text or after-the-fact moderation. Where a safety property could be a rule or a shape, this spec requires the shape.
+
+- **SAF-01 — Parent ultimate authority.** The parent SHALL hold implicit, unrestricted authority over their child's account. Every other power over a child — tutor, coach, follower, AI — SHALL exist only as a parent-issued Grant: scoped, provenance-stamped, expirable, revocable, and audited. Delegated power is *leased*, never owned; revocation SHALL take effect immediately at `authorize()` (grant status active/suspended/revoked honored on every call — this is also the AI kill-switch).
+- **SAF-02 — Family isolation.** RLS SHALL enforce zero cross-family leakage on every table. The isolation test matrix (every role × every table × read/write) SHALL be re-run green on every migration; any red cell blocks merge (SEC-03, ACC-02).
+- **SAF-03 — No hidden adult-child channels.** A private 1:1 adult-child room SHALL have *no constructor*. Channels are derived views of Group membership; child membership auto-derives guardian membership, so the guardian is a structural co-member of every channel a child is in. Every message SHALL be an Event with a required `context_ref` — a contextless message is unrepresentable.
+- **SAF-04 — PII boundary.** A child's real/pilot/display name SHALL be un-emittable to any AI: `buildContextPack(child_id)` is a whitelist projection that never selects it (fail-closed by omission); all AI-visible references use opaque `child_id` only.
+- **SAF-05 — Asymmetric visibility.** The parent SHALL see everything sent to or about their child (one read-time rule inside `authorize()`); the child SHALL see only content cleared for them. Comments flow to the parent in full (with AI flags); only clearly positive content becomes child-visible automatically; anything potentially discouraging is held/blurred until a human approves. Nothing discouraging reaches a child unless a human chooses it, and no commenter is publicly shamed.
+- **SAF-06 — Publishing a minor is the highest-sensitivity surface.** All child artifacts SHALL default to private. Public exposure is parent-curated per artifact via `visibility_scope`; no full name, location, or identifying info by default. Follower invites SHALL be parent-issued, single-use, and revocable (never guessable public URLs); followers individually and instantly revocable. Private media (coaching annotations, sent-to-child) SHALL use access-controlled playback with signed, expiring links — never link-anyone-can-view.
+- **SAF-07 — AI is an assistant, never police.** AI safety output is advisory only: red/orange/green flags surfaced to the responsible human, who decides. The AI SHALL have no autonomous gatekeeping, deletion, or discipline power; it is an Actor holding a Grant with an `owner_actor_id` (an accountable human).
+- **SAF-08 — Immutable honest record.** A child's raw work SHALL be immutable and unforgeable — appendable by others (grades, annotations, Moments) but never editable or deletable by anyone, including parent, tutor, and AI. Corrections supersede via new events; derived numbers (mastery) are always recomputed from the log, never hand-written.
+
+## 16. Compliance & Legal Infrastructure
+
+- **LEG-01 — Verifiable parental consent (COPPA-2025).** The system SHALL obtain verifiable parental consent before collecting personal information from an under-13 child. The parent's Stripe card transaction (on the nonprofit's own account) SHALL serve as the FTC-recognized VPC anchor, logged as an immutable consent Event.
+- **LEG-02 — Per-disclosure consent.** Each disclosure of child data to a new party — every tutor, coach, and follower grant — SHALL be preceded by direct notice to the parent and recorded as its own explicit consent Event attached to the Grant. No grant free-rides on payment-time consent.
+- **LEG-03 — Fail-closed consent gating.** Consent SHALL be a precondition enforced in `authorize()`, default-deny — never a fact recorded after the action. Missing consent SHALL block the action *even for the parent* (ACC-03). Extending consent-gating to ALL raw RLS read paths is a mandatory hosting gate (SEC-08).
+- **LEG-04 — Data minimization.** Collect only what the declared purpose requires. Raw ink strokes are biometric-grade (opt-in, off by default); raw audio is never retained beyond transcription; retention windows SHALL be explicit per data class.
+- **LEG-05 — Written policies before hosting.** A written data-retention policy and written information-security policy (COPPA-2025 mandated artifacts) SHALL exist and be approved before any real family is hosted. These are hosting gates, not post-launch tasks.
+- **LEG-06 — Parent-only export/delete.** `exportChild` SHALL walk Events + Artifacts to produce a complete portable record (data is structurally un-trappable); deletion honored per the retention policy. Both are parent-only powers; no other role, including the AI, may invoke them.
+- **LEG-07 — E-sign / waivers (ESIGN/UETA).** E-signature capture SHALL record intent to sign, consent to transact electronically, and a full audit trail (who / when / document version) as immutable signature Events. The Academy's attorney authors all waiver and legal-document content; the software only assigns, tracks, and stores.
+- **LEG-08 — Requirement-sets.** Compliance obligations SHALL be modeled as rules keyed by (group purpose × role × season) that auto-instantiate per-member assigned→completed Events on membership — one engine powering onboarding, missing-item alerts, signature tracking, and expiry/renewal reminders.
+- **LEG-09 — Records by construction.** The append-only Event log (attendance, completion, signature, grades, hours) IS the recordkeeping obligation: homeschool hours, safety/custody, and Academy compliance records are derived views over invariant-grade Events, never separate ledgers.
+- **LEG-10 — 501(c)(3) money rules.** Donations SHALL run exclusively through the nonprofit's OWN Stripe account. The app records a non-binding `payment_intent` Event (stated intention: child/page + optional note) plus read-only entitlement, and SHALL NEVER allocate, move, earmark, or disburse funds — an allocation ledger is prohibited by construction (*see, don't move*). Giving-time disclosure: the gift supports the Academy's program; the Academy intends to use it to help the named child but retains full discretion; no individual allocation is guaranteed. Disclosure and receipt wording SHALL be attorney-reviewed before this floor ships.
+- **LEG-11 — Oklahoma Parental Choice Tax Credit helper.** Any eligibility estimate SHALL be clearly labeled non-guaranteed and illustrative, computed from current-year published program tiers pulled when the floor is built (never hardcoded, verified annually), with an opt-in deadline/notification track telling each family exactly what to do and by when. Not tax advice.
+
+## 17. Security Architecture
+
+- **SEC-01 — Key posture.** Every client SHALL use only the anon key + the user's JWT, with RLS as the enforcement floor. No service-role or production-capable key SHALL exist in any client, browser, or autonomous agent — categorically including any agent that reads untrusted content (OCR text, uploads, comments).
+- **SEC-02 — SECURITY DEFINER discipline.** Every SECURITY DEFINER function SHALL pin an explicit `search_path` and SHALL re-filter authorization in its body — never relying on RLS alone from definer context.
+- **SEC-03 — Migration security review.** Every migration touching auth, RLS, grants, consent, or SECURITY DEFINER SHALL pass the security-review pipeline before merge, with the full isolation matrix re-run green (SAF-02). The in-flight review of migrations 0003/0004/0005 + the Edge Function is a standing precondition to promotion.
+- **SEC-04 — Untrusted-input boundary.** All OCR output, uploads, transcripts, and comments SHALL be treated as untrusted: quoted into prompts as data, never interpolated as instructions. The prompt-injection boundary is enforced at the AI gateway.
+- **SEC-05 — Secrets scanning.** Automated secrets scanning SHALL run on every commit; a detected credential blocks merge and triggers rotation.
+- **SEC-06 — Dev/prod separation.** Development and production SHALL be separate projects with separate keys; any MCP/agent database access is DEV-only and read-only; no autonomous agent ever touches the production database.
+- **SEC-07 — Audit immutability.** The audit/event log SHALL be append-only, enforced in-database (`forbid_mutation` trigger, pinned `search_path`); every privileged action writes who/what/when + model/prompt version.
+- **SEC-08 — Hosting gates (local-first, gated promotion).** Real families SHALL NOT be hosted until ALL gates pass: (a) security review of all auth/RLS migrations + Edge Functions; (b) consent-gating extended to ALL raw RLS read paths, not only the seven service functions; (c) real Google OAuth with child-without-email profiles; (d) written retention + info-security policies (LEG-05); (e) isolation matrix green; (f) secrets/key posture verified.
+- **SEC-09 — Staging posture.** The staging deployment at theallaroundathleteacademy.com SHALL contain synthetic data only until every SEC-08 gate passes; real child data never reaches an environment that has not cleared the gates.
+- **SEC-10 — AI gateway fail-closed.** All model calls route through the single gateway. A provider without a signed no-train/ZDR agreement SHALL be ineligible for child data — the call is refused, not degraded. Output side: deterministic-solver verification and moderation on every child-facing string.
+
+## 18. Non-Functional Requirements
+
+- **NFR-01 — Cross-device.** iPad-first touch with full desktop support; minimum 48px tap targets; Pencil for expression, touch always works.
+- **NFR-02 — Young-child accessibility.** Low reading load: icon- and voice-forward UI with read-aloud on every prompt; age-tiered shell (3–5 / 6–8 / 9–12); dyslexia-friendly type, chunking, uncluttered layouts (ADHD/dyscalculia-aware); WCAG contrast; honor `prefers-reduced-motion`.
+- **NFR-03 — Performance.** Practice interactions SHALL feel instant (feedback within a ~100ms perceptual budget); capture SHALL never block play — attempt emission is asynchronous and invisible to the game loop.
+- **NFR-04 — Reliability.** Capture SHALL be idempotent and offline-tolerant: client-generated attempt IDs dedupe retries; events queue locally and flush on reconnect; no double-count, no loss.
+- **NFR-05 — Cost discipline.** Generated problems SHALL be cached and reused across children; cheap models route grading; frontier models reserved for a stuck child; tutor turns rate-limited; consumer pricing framed per family (all siblings) at ~$15–19/mo.
+- **NFR-06 — Observability.** Error reporting PII-scrubbed (no child names or content in traces); analytics cookieless and aggregate; zero child behavioral tracking or ad-tech, ever.
+- **NFR-07 — Intrinsic motivation.** Dark patterns SHALL be banned in child surfaces: no loss-aversion streaks, fake timers, or engagement loops; feedback, never punishment; no timed context ever feeds an understanding gate.
+
+## 19. Build State & Roadmap
+
+**Built and proven (local branch, synthetic families):**
+- **RM-01** — Capture spine: frozen AttemptEvent contract (with `context` escape hatch), recorder green, real latency/ASR capture, Bayesian mastery computed over the log.
+- **RM-02** — Accounts + family isolation with the proven isolation matrix; tutor powers (grades, annotations, feedback, uploads, Moments slots) as additive artifacts.
+- **RM-03** — Hub UI: parent, child, and tutor views.
+- **RM-04** — Secure-yard kernel: fail-closed `authorize()`/consent gate, PII context pack, AI gateway + mock provider, append-only audit — proven end-to-end by the read-only AI parent progress summary.
+- **RM-05** — Live game's COPPA leaderboard fix shipped to production.
+
+**In flight:**
+- **RM-06** — Security review of migrations 0003/0004/0005 + the Edge Function (SEC-03; blocks promotion).
+
+**Next, in order:**
+- **RM-07** — Group + Membership derivation engine with the §21 refinements (group purpose attribute; requirement-sets; invariant-grade attendance/completion/signature Events; message-as-context-required-Event; channel-as-derived-view).
+- **RM-08** — Richer content + AI teacher's-assistant grading loop (AI grades, human approves, every grade deepens the per-child model).
+- **RM-09** — Veritas visual pass (shared design tokens; game + hub one world).
+- **RM-10** — Staging deploy at theallaroundathleteacademy.com, synthetic data only (SEC-09).
+- **RM-11** — Hosting gates checklist (SEC-08) to completion.
+- **RM-12** — Real-family go-live: real Google OAuth, child-without-email profiles, end-to-end smoke test; first family (parent, daughter, grandmother-tutor).
+- **RM-13** — Academy onboarding floors: guided join path, waivers/e-sign, requirement tracking, group messaging.
+- **RM-14** — Follow Me showcase + sponsorship (SAF-06 and LEG-10 are preconditions).
+
+**Not now (leave the seams; never wire as a side effect):**
+- **RM-15** — Public API / admin MCP; open-ended AI tutor; DKT / prerequisite-graph compute / CAS-OCR grading; migration of the live game's 13 legacy PII-tainted rows (frozen; any cutover only ever as its own deliberate, reversible, gated step).
+
+## 20. Acceptance Criteria (the standing rubric)
+
+- **ACC-01 — The five questions, by construction.** Every feature, at every review, SHALL answer structurally: who is this actor (Actor); what may they do (Grant/`authorize()`); what should they do next (derived view); what evidence proves what happened (Event/audit); who is responsible (Grant provenance). If any answer requires a human to go look rather than the system to answer, the feature fails.
+- **ACC-02 — Isolation matrix green on every migration:** zero cross-family reads or writes in any role × table × operation cell.
+- **ACC-03 — Consent fail-closed, proven by test:** a missing consent event blocks the action *even for the parent*; the suite asserts the deny.
+- **ACC-04 — No name in any AI payload:** automated tests inspect every gateway payload; any child real/pilot/display name fails the build.
+- **ACC-05 — Every AI write behind human approval:** no AI-authored event becomes authoritative (grade recorded, assignment delivered, content child-visible) without an approval event; tested.
+- **ACC-06 — Every privileged action audited:** each privileged call yields exactly one immutable audit event (who/what/when + model/prompt version); mutation attempts on audit rows fail; tested.
+- **ACC-07 — One upload, rightful destinations only:** per floor, a single upload reaches every destination its visibility scope entitles — and none it does not; tested before that floor ships.
+
+---
+
+*End of specification v1.0. Governing documents: THE ONE PAGE — Spec Source of Truth; AI-Native Next-Steps Plan §1–22. Amend by first-principles review, never by drift.*

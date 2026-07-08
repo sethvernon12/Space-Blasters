@@ -54,6 +54,13 @@ begin
   end if;
   -- the parent must be an ADULT; the child identity must be a fresh @child.invalid
   if public.is_child_actor(p_parent_id) then return jsonb_build_object('ok', false, 'error', 'not_authorized'); end if;
+  -- defense-in-depth (H1): the parent uid MUST be a real, non-child auth identity —
+  -- rejects a garbage/non-existent uid. NOTE: this cannot tell one real parent from
+  -- another, so the checkout endpoint (3.5b) MUST stamp metadata.parent_uid from the
+  -- JWT-verified payer server-side (never a client field). Locked before that lands.
+  if not exists (select 1 from auth.users where id = p_parent_id and coalesce(email, '') not like '%@child.invalid') then
+    return jsonb_build_object('ok', false, 'error', 'invalid_parent');
+  end if;
   select email, last_sign_in_at into v_email, v_last from auth.users where id = p_auth_user_id;
   if v_email is null or v_email not like '%@child.invalid' or v_last is not null then
     return jsonb_build_object('ok', false, 'error', 'invalid_child_identity'); end if;
@@ -79,8 +86,10 @@ begin
           jsonb_build_object('source', 'provisioning', 'method', coalesce(p_method, 'stripe_card_transaction'), 'event_id', p_event_id));
   return jsonb_build_object('ok', true, 'child_id', v_child_id, 'consent_id', v_consent_id);
 exception when unique_violation then
-  -- lost a race on stripe_events.event_id → the other caller processed it
+  -- ONLY treat a real stripe_events(event_id) collision as idempotent; any OTHER
+  -- unique_violation must NOT be masked as success (S1).
   select child_id into v_child_id from public.stripe_events where event_id = p_event_id;
+  if not found then raise; end if;
   return jsonb_build_object('ok', true, 'child_id', v_child_id, 'idempotent', true);
 end $$;
 revoke all on function public.grant_consent(uuid, uuid, text, text, text, text, text, text) from public, anon, authenticated;

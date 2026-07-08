@@ -13,7 +13,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createHmac } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { m3Config, setupFamily, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
 
 const { Client } = pgpkg
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -89,6 +89,27 @@ try {
   const r5 = await post(evt('evt_rm13_nomd', { parent_uid: uids.seth }))  // no nickname
   const cM2 = await childCount()
   r5.status === 200 && cM2 === cM ? ok('signed event with missing metadata → 200 ack, no child created') : bad(`no-md: status=${r5.status} ${cM}->${cM2}`)
+
+  // ---- 6. garbage parent_uid → invalid_parent (H1 defense-in-depth) + orphan cleanup ----
+  console.log('garbage parent_uid + orphan cleanup:')
+  const invBefore = (await q(`select count(*)::int n from auth.users where email like '%@child.invalid'`)).rows[0].n
+  const r6 = await post(evt('evt_rm13_badparent', { parent_uid: '00000000-0000-4000-8000-000000000000', nickname: 'Ghost', grade: '1', policy_version: 'v1' }))
+  const invAfter = (await q(`select count(*)::int n from auth.users where email like '%@child.invalid'`)).rows[0].n
+  const ghost = (await q(`select count(*)::int n from public.children where nickname='Ghost'`)).rows[0].n
+  r6.status === 400 && ghost === 0 && invAfter === invBefore
+    ? ok('garbage parent_uid → invalid_parent (400); no child, and the transient child user is cleaned up (no orphan)')
+    : bad(`badparent: status=${r6.status} ghost=${ghost} orphan=${invBefore}->${invAfter}`)
+
+  // ---- 7. entitlements are parent-own; stripe_events has no client access ----
+  console.log('entitlements / stripe_events isolation:')
+  const dana = await signInAs(cfg, FAMILY.beta.parent.email)
+  const seth = await signInAs(cfg, FAMILY.alpha.parent.email)
+  const danaEnt = (await dana.client.from('entitlements').select('id')).data ?? []
+  const danaEvents = (await dana.client.from('stripe_events').select('event_id')).data ?? []
+  const sethEnt = (await seth.client.from('entitlements').select('id')).data ?? []
+  danaEnt.length === 0 && danaEvents.length === 0 && sethEnt.length === 1
+    ? ok('entitlements are parent-own (Dana 0, Seth 1); stripe_events has no client access')
+    : bad(`RLS: danaEnt=${danaEnt.length} danaEvents=${danaEvents.length} sethEnt=${sethEnt.length}`)
 
   const net = (await childCount()) - before
   net === 1 ? ok('net effect across all events: exactly ONE child created') : bad(`net children created = ${net} (want 1)`)

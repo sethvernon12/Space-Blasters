@@ -55,7 +55,7 @@ const browser = await chromium.launch({ args: ['--disable-web-security'] })
 
 try {
   // ---- SEC-REV-21: parent_uid is server-stamped; a forged body value is ignored ----
-  const chk = await invoke('create-consent-checkout', seth.session.access_token, { nickname: 'X', gradeBand: '2', returnUrl: 'http://x.local', parent_uid: uids.dana })
+  const chk = await invoke('create-consent-checkout', seth.session.access_token, { nickname: 'X', gradeBand: '2', returnUrl: `http://127.0.0.1:${PORT}`, parent_uid: uids.dana })
   chk.status === 200 && chk.body?.parent_uid === uids.seth && chk.body?.mock === true
     ? ok('SEC-REV-21: create-consent-checkout stamps parent_uid from the caller (forged body parent_uid ignored)') : bad(`SEC-REV-21: ${JSON.stringify(chk.body)}`)
   const childChk = await invoke('create-consent-checkout', brielle.session.access_token, { nickname: 'X', returnUrl: 'http://x.local' })

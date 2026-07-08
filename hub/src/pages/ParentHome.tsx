@@ -86,7 +86,7 @@ export default function ParentHome({ profile }: { profile: Profile }) {
         <p className="text-sm text-muted-foreground">Signed in as {profile.displayName}</p>
       </div>
       {flash && <p className="rounded-xl bg-green-soft px-4 py-2 text-sm font-medium" style={{ color: 'var(--success)' }}>{flash}</p>}
-      {pending && <p data-testid="payment-pending" className="rounded-xl px-4 py-2 text-sm font-medium" style={{ background: 'var(--gold-soft)', color: 'var(--warning-text)' }}>Payment received — finishing setup…</p>}
+      {pending && <p data-testid="payment-pending" className="rounded-xl px-4 py-2 text-sm font-medium" style={{ background: 'var(--gold-soft)', color: 'var(--warning-text)' }}>Confirming your setup…</p>}
 
       {/* Cockpit instrument: everything awaiting the parent, across all children */}
       {FEATURE_AI && pendingCount > 0 && (

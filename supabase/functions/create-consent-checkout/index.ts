@@ -16,23 +16,36 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const URL_ = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
 
+// returnUrl must be an allow-listed hub origin (no open self-redirect). With
+// HUB_ALLOWED_ORIGINS set (DEV/staging) only those origins pass; unset (local
+// dev) only localhost/127.0.0.1. Fail-closed.
+function returnUrlOk(returnUrl: string): boolean {
+  let u: URL
+  try { u = new URL(returnUrl) } catch { return false }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false
+  const allowed = (Deno.env.get('HUB_ALLOWED_ORIGINS') ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+  if (allowed.length) return allowed.includes(u.origin)
+  return u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const auth = req.headers.get('Authorization') ?? ''
   if (!auth) return json({ error: 'unauthenticated' }, 401)
-  const body = await req.json().catch(() => ({}))
-  const nickname = String(body?.nickname ?? '').slice(0, 40).trim()
-  const grade = body?.gradeBand ? String(body.gradeBand).slice(0, 8) : ''
-  const returnUrl = String(body?.returnUrl ?? '')
-  if (!nickname) return json({ error: 'bad_request' }, 400)
-  if (!/^https?:\/\/[^\s]+$/.test(returnUrl)) return json({ error: 'bad_return_url' }, 400)
 
-  // authenticated ADULT only (children never start a checkout)
+  // authenticated ADULT only (children never start a checkout) — checked FIRST
   const caller = createClient(URL_, ANON, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } })
   const { data: who } = await caller.auth.getUser()
   if (!who?.user) return json({ error: 'unauthenticated' }, 401)
   const { data: amChild } = await caller.rpc('is_child_actor', { p_uid: who.user.id })
   if (amChild === true) return json({ denied: true, reason: 'not_authorized' }, 403)
+
+  const body = await req.json().catch(() => ({}))
+  const nickname = String(body?.nickname ?? '').slice(0, 40).trim()
+  const grade = body?.gradeBand ? String(body.gradeBand).slice(0, 8) : ''
+  const returnUrl = String(body?.returnUrl ?? '')
+  if (!nickname) return json({ error: 'bad_request' }, 400)
+  if (!returnUrlOk(returnUrl)) return json({ error: 'bad_return_url' }, 400)
 
   // parent_uid is SERVER-DERIVED (SEC-REV-21) — a client body value is ignored.
   const metadata: Record<string, string> = { parent_uid: who.user.id, nickname, grade, policy_version: 'v1' }

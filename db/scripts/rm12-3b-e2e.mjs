@@ -57,14 +57,7 @@ try {
   await page.getByText('Your children', { exact: false }).first().waitFor({ timeout: 15000 })
   ok('Return to parent restored the parent session')
 
-  // 3. add a child → appears in the roster (no consent → awaiting setup)
-  await page.getByTestId('add-child').click()
-  await page.getByLabel('Child nickname').fill('Newbie')
-  await page.getByRole('button', { name: /^Add child$/ }).click()
-  await page.getByText('Newbie', { exact: false }).first().waitFor({ timeout: 15000 })
-  await page.getByText('Awaiting setup', { exact: false }).first().waitFor({ timeout: 10000 })
-  ok('add-a-child created a profile (visible to parent, awaiting setup — consent-gated)')
-
+  // (add-a-child → consent checkout is covered by rm14-consent-e2e)
   const bad2 = errs.filter((e) => !/favicon|Failed to load resource.*404/.test(e))
   bad2.length ? bad(`page errors: ${bad2.slice(0, 2).join(' | ')}`) : ok('no page errors')
   await ctx.close()

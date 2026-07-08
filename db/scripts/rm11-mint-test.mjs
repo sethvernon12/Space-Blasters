@@ -8,7 +8,7 @@
 import pgpkg from 'pg'
 import { spawn } from 'node:child_process'
 import { createClient } from '@supabase/supabase-js'
-import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, mintChildSession, adminClient, FAMILY } from './family.mjs'
 
 const { Client } = pgpkg
 let fails = 0
@@ -37,17 +37,20 @@ const invoke = async (fn, token, bodyObj) => {
 }
 // wait for readiness
 let ready = false
-for (let i = 0; i < 40 && !ready; i++) { await new Promise((r) => setTimeout(r, 3000)); const r = await invoke('create-child', S.seth.session.access_token, {}).catch(() => null); if (r && r.status && r.status !== 502 && r.status !== 503) ready = true }
+for (let i = 0; i < 40 && !ready; i++) { await new Promise((r) => setTimeout(r, 3000)); const r = await invoke('start-child-session', S.seth.session.access_token, {}).catch(() => null); if (r && r.status && r.status !== 502 && r.status !== 503) ready = true }
 ready ? ok('functions serving') : bad('functions not ready')
 
 try {
-  // ---- 1. create-child: a NO-EMAIL child under the parent ----
-  console.log('create-child (no-email child under parent):')
-  const cc = await invoke('create-child', S.seth.session.access_token, { nickname: 'Newkid', gradeBand: '2' })
-  const newId = cc.body?.child_id
-  const row = newId ? (await q(`select c.parent_id, c.nickname, u.email from public.children c join auth.users u on u.id = c.auth_user_id where c.id=$1`, [newId])).rows[0] : null
-  cc.status === 200 && row && row.parent_id === uids.seth && row.nickname === 'Newkid' && /@child\.invalid$/.test(row.email)
-    ? ok('created a no-email child (opaque @child.invalid handle) bound under Seth') : bad(`create-child: ${JSON.stringify({ cc, row })}`)
+  // ---- 1. a no-email child under Seth (create-child is DEPRECATED — the consent
+  //          webhook is the canonical creation path; here we seed a mint target) ----
+  console.log('mint target (no-email child under parent):')
+  const admin = adminClient(cfg)
+  const { data: cu } = await admin.auth.admin.createUser({ email: `c_${crypto.randomUUID()}@child.invalid`, password: crypto.randomUUID() + crypto.randomUUID(), email_confirm: true })
+  const newId = crypto.randomUUID()
+  await q(`insert into public.children (id, parent_id, auth_user_id, nickname) values ($1,$2,$3,'Newkid')`, [newId, uids.seth, cu.user.id])
+  const row = (await q(`select c.parent_id, u.email from public.children c join auth.users u on u.id = c.auth_user_id where c.id=$1`, [newId])).rows[0]
+  row && row.parent_id === uids.seth && /@child\.invalid$/.test(row.email)
+    ? ok('no-email child under Seth (mint target)') : bad(`seed: ${JSON.stringify(row)}`)
 
   // ---- 2. start-child-session: minted session is the child + DB-isolated ----
   console.log('start-child-session (minted, isolated, no link leak):')
@@ -78,7 +81,7 @@ try {
   tut.status === 403 && tut.body?.reason === 'not_authorized' ? ok('granted tutor cannot mint (ownership = parent only)') : bad(`tutor mint: ${JSON.stringify(tut)}`)
 
   // ---- 5. child-caller escalation denied ----
-  const childCreate = await invoke('create-child', S.brielle.session.access_token, { nickname: 'X' })
+  const childCreate = await invoke('create-consent-checkout', S.brielle.session.access_token, { nickname: 'X', returnUrl: 'http://x.local' })
   const childMint = await invoke('start-child-session', S.brielle.session.access_token, { childId: newId })
   const childRpc = (await S.brielle.client.rpc('authorize_and_record_mint', { p_child_id: newId })).data
   childCreate.status === 403 && childMint.status === 403 && childRpc?.error === 'not_authorized'

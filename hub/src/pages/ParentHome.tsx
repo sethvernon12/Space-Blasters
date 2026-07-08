@@ -3,7 +3,7 @@ import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
 import { ProgressRing } from '@/components/ProgressRing'
 import { MasteryBar } from '@/components/MasteryBar'
-import { approveAssignment, approveGrade, createChild, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
+import { approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, loadChildrenAndGrants, startConsentCheckout, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import { useSession, type Profile } from '@/lib/session'
 
 const FEATURE_AI = true // flag-gated; routes through the kernel (child-summary + approvals)
@@ -24,20 +24,38 @@ export default function ParentHome({ profile }: { profile: Profile }) {
   const [busy, setBusy] = useState(false)
   const childName = (id: string) => profile.children.find((c) => c.id === id)?.nickname ?? 'your child'
 
+  const [pending, setPending] = useState(false)
+
   async function addChild(e: FormEvent) {
     e.preventDefault()
     if (!nick.trim()) return
     setBusy(true)
-    const { ok, error } = await createChild(nick.trim(), grade.trim() || null)
-    setBusy(false)
-    if (!ok) { setFlash(`Could not add child: ${error}`); return }
-    setNick(''); setGrade(''); setAddOpen(false); setFlash('Child added ✓')
-    await reloadProfile()
+    const res = await startConsentCheckout(nick.trim(), grade.trim() || null)
+    if ('error' in res) { setBusy(false); setFlash(`Could not start setup: ${res.error}`); return }
+    window.location.assign(res.url) // → Stripe Checkout (or, in mock, straight back to us)
   }
   async function enterHub(id: string) {
     const err = await enterChild(id)
     if (err) setFlash(`Could not enter: ${err}`)
   }
+
+  // On return from Checkout, poll until the webhook-created child appears, then refresh.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('consent') !== 'complete') return
+    let cancelled = false
+    ;(async () => {
+      setPending(true)
+      const baseline = profile.children.length
+      for (let i = 0; i < 20 && !cancelled; i++) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const { children } = await loadChildrenAndGrants()
+        if (children.length > baseline) { await reloadProfile(); break }
+      }
+      if (!cancelled) { setPending(false); window.history.replaceState({}, '', window.location.pathname) }
+    })()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const load = useCallback(async () => {
     const m: Record<string, SkillMastery[]> = {}
@@ -68,6 +86,7 @@ export default function ParentHome({ profile }: { profile: Profile }) {
         <p className="text-sm text-muted-foreground">Signed in as {profile.displayName}</p>
       </div>
       {flash && <p className="rounded-xl bg-green-soft px-4 py-2 text-sm font-medium" style={{ color: 'var(--success)' }}>{flash}</p>}
+      {pending && <p data-testid="payment-pending" className="rounded-xl px-4 py-2 text-sm font-medium" style={{ background: 'var(--gold-soft)', color: 'var(--warning-text)' }}>Payment received — finishing setup…</p>}
 
       {/* Cockpit instrument: everything awaiting the parent, across all children */}
       {FEATURE_AI && pendingCount > 0 && (
@@ -167,8 +186,9 @@ export default function ParentHome({ profile }: { profile: Profile }) {
           <form onSubmit={addChild} className="flex flex-col gap-2">
             <input value={nick} onChange={(e) => setNick(e.target.value)} maxLength={40} placeholder="Child's nickname" aria-label="Child nickname" autoFocus className="min-h-10 rounded-xl border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-border-strong" />
             <input value={grade} onChange={(e) => setGrade(e.target.value)} maxLength={8} placeholder="Grade (optional, e.g. 2)" aria-label="Grade band" className="min-h-10 rounded-xl border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-border-strong" />
+            <p className="text-xs text-muted-foreground">A nominal, refundable charge verifies you're the parent (COPPA consent) before any of your child's data is collected.</p>
             <div className="flex gap-2">
-              <button type="submit" disabled={busy || !nick.trim()} className="min-h-9 flex-1 rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-60">{busy ? 'Adding…' : 'Add child'}</button>
+              <button type="submit" disabled={busy || !nick.trim()} className="min-h-9 flex-1 rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-60">{busy ? 'Starting…' : 'Continue to consent'}</button>
               <button type="button" onClick={() => setAddOpen(false)} className="min-h-9 rounded-full border border-border px-4 text-sm font-semibold text-foreground hover:bg-surface-muted">Cancel</button>
             </div>
           </form>

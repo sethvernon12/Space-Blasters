@@ -24,13 +24,17 @@ export async function loadChildrenAndGrants(): Promise<{ children: ChildRow[]; g
   return { children: (kids.data ?? []) as ChildRow[], grants: (grants.data ?? []) as Grant[] }
 }
 
-// Add a child profile — parent-authorized create-child Edge Function (the child
-// is a no-email identity; its data/hub stay consent-gated until Phase 3.5).
-export async function createChild(nickname: string, gradeBand: string | null): Promise<{ ok: boolean; error?: string }> {
-  const { data, error } = await supabase.functions.invoke('create-child', { body: { nickname, gradeBand } })
-  if (error) return { ok: false, error: error.message }
-  if (!data?.child_id) return { ok: false, error: data?.reason ?? 'create_failed' }
-  return { ok: true }
+// Start the consent Checkout for a new child (Phase 3.5). Returns the Stripe
+// Checkout URL to redirect to; on payment, the signature-verified webhook creates
+// the child + immutable consent atomically (no child row exists before consent).
+// parent_uid is stamped server-side by the function — never sent from here.
+export async function startConsentCheckout(nickname: string, gradeBand: string | null): Promise<{ url: string } | { error: string }> {
+  const { data, error } = await supabase.functions.invoke('create-consent-checkout', {
+    body: { nickname, gradeBand, returnUrl: window.location.origin },
+  })
+  if (error) return { error: error.message }
+  if (!data?.url) return { error: data?.reason ?? 'checkout_failed' }
+  return { url: data.url }
 }
 
 // Mint a session for one of the parent's OWN children (the only door). Server-

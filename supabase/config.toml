@@ -421,3 +421,13 @@ verify_jwt = true
 
 [functions.generate-assignment]
 verify_jwt = true
+
+[functions.create-child]
+verify_jwt = true
+
+[functions.start-child-session]
+verify_jwt = true
+
+# Stripe sends no Supabase JWT — the HMAC signature IS the authentication.
+[functions.stripe-webhook]
+verify_jwt = false

@@ -1,7 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
-import { loadChildrenAndGrants, type ChildRow } from './api'
+import { loadChildrenAndGrants, startChildSession, type ChildRow } from './api'
 
 export type Role = 'parent' | 'child' | 'tutor'
 
@@ -30,6 +30,9 @@ interface Ctx {
   profile: Profile | null
   signInAs: (email: string) => Promise<string | null>
   signOut: () => Promise<void>
+  enterChild: (childId: string) => Promise<string | null>
+  returnToParent: () => Promise<void>
+  reloadProfile: () => Promise<void>
 }
 const SessionCtx = createContext<Ctx | null>(null)
 
@@ -72,17 +75,43 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => { alive = false }
   }, [session])
 
+  const parentStash = useRef<Session | null>(null)
+
   const signInAs = useCallback(async (email: string) => {
     if (!ALLOW_DEV_SIGNIN) return 'dev sign-in is disabled in this build'
     const { error } = await supabase.auth.signInWithPassword({ email, password: PW })
     return error ? error.message : null
   }, [])
   const signOut = useCallback(async () => {
+    parentStash.current = null
     await supabase.auth.signOut()
     setProfile(null)
   }, [])
 
-  const value = useMemo(() => ({ session, loading, profile, signInAs, signOut }), [session, loading, profile, signInAs, signOut])
+  const reloadProfile = useCallback(async () => {
+    if (!session) return
+    setProfile(await loadProfile(session.user.id, session.user.email ?? ''))
+  }, [session])
+
+  // Enter one of the parent's OWN children via the mint; stash the parent session
+  // IN MEMORY ONLY (a reload in child mode requires a full parent re-sign-in — the
+  // safe failure direction on a shared family device).
+  const enterChild = useCallback(async (childId: string) => {
+    const res = await startChildSession(childId)
+    if ('error' in res) return res.error
+    parentStash.current = session
+    const { error } = await supabase.auth.setSession({ access_token: res.access_token, refresh_token: res.refresh_token })
+    return error ? error.message : null
+  }, [session])
+  const returnToParent = useCallback(async () => {
+    const p = parentStash.current
+    parentStash.current = null
+    if (p) await supabase.auth.setSession({ access_token: p.access_token, refresh_token: p.refresh_token })
+    else { await supabase.auth.signOut(); setProfile(null) } // reloaded → re-auth
+  }, [])
+
+  const value = useMemo(() => ({ session, loading, profile, signInAs, signOut, enterChild, returnToParent, reloadProfile }),
+    [session, loading, profile, signInAs, signOut, enterChild, returnToParent, reloadProfile])
   return <SessionCtx.Provider value={value}>{children}</SessionCtx.Provider>
 }
 

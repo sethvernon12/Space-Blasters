@@ -9,7 +9,10 @@ const ROLE_LABEL: Record<string, string> = { parent: 'Parent', child: 'Learner',
 // The signed-in shell: a slim top bar (brand + who + switch) over a centered
 // content column. Responsive, touch-first (44px+ targets).
 export function RoleShell({ role, name, children }: { role: string; name: string; children: ReactNode }) {
-  const { signOut } = useSession()
+  const { signOut, returnToParent } = useSession()
+  // a child session only ever exists via a parent's mint → the action returns to
+  // the parent; every other role signs out.
+  const isChild = role === 'child'
   return (
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-20 flex items-center gap-2.5 border-b border-border bg-card/90 px-4 py-2.5 backdrop-blur-sm">
@@ -27,10 +30,10 @@ export function RoleShell({ role, name, children }: { role: string; name: string
           </span>
           <button
             type="button"
-            onClick={signOut}
+            onClick={isChild ? returnToParent : signOut}
             className="flex min-h-9 items-center gap-1.5 rounded-full border border-border-strong bg-card px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface-muted"
           >
-            <Icon name="Repeat" size={15} /> Switch
+            <Icon name={isChild ? 'ArrowLeft' : 'Repeat'} size={15} /> {isChild ? 'Return to parent' : 'Switch'}
           </button>
         </div>
       </header>

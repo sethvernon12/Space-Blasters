@@ -4,7 +4,7 @@
 // isolation tests exercise); kept as small TS here to stay inside the hub build.
 import { supabase } from './supabase'
 
-export interface ChildRow { id: string; nickname: string; grade_band: string | null; parent_id: string | null; auth_user_id: string | null }
+export interface ChildRow { id: string; nickname: string; grade_band: string | null; parent_id: string | null; auth_user_id: string | null; consent_id: string | null }
 export interface Grant { child_id: string; can_write: boolean; active: boolean }
 export interface SkillMastery { skillKey: string; displayName: string; subject: string; mastery: number; attempts: number; correct: number; position: number }
 export interface NextActivity { action: 'keep_practicing' | 'ease' | 'advance'; icon: string; reason: string; focusSkill: string; displayName: string }
@@ -18,10 +18,28 @@ interface MasteryRow {
 
 export async function loadChildrenAndGrants(): Promise<{ children: ChildRow[]; grants: Grant[] }> {
   const [kids, grants] = await Promise.all([
-    supabase.from('children').select('id,nickname,grade_band,parent_id,auth_user_id'),
+    supabase.from('children').select('id,nickname,grade_band,parent_id,auth_user_id,consent_id'),
     supabase.from('tutor_grants').select('child_id,can_write,active'),
   ])
   return { children: (kids.data ?? []) as ChildRow[], grants: (grants.data ?? []) as Grant[] }
+}
+
+// Add a child profile — parent-authorized create-child Edge Function (the child
+// is a no-email identity; its data/hub stay consent-gated until Phase 3.5).
+export async function createChild(nickname: string, gradeBand: string | null): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await supabase.functions.invoke('create-child', { body: { nickname, gradeBand } })
+  if (error) return { ok: false, error: error.message }
+  if (!data?.child_id) return { ok: false, error: data?.reason ?? 'create_failed' }
+  return { ok: true }
+}
+
+// Mint a session for one of the parent's OWN children (the only door). Server-
+// side ownership + rate-limit + audit; the raw one-time link never returns here.
+export async function startChildSession(childId: string): Promise<{ access_token: string; refresh_token: string } | { error: string }> {
+  const { data, error } = await supabase.functions.invoke('start-child-session', { body: { childId } })
+  if (error) return { error: error.message }
+  if (!data?.access_token) return { error: data?.reason ?? 'mint_failed' }
+  return { access_token: data.access_token, refresh_token: data.refresh_token }
 }
 
 export async function getMastery(childId: string): Promise<SkillMastery[]> {

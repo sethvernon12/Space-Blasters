@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
 import { ProgressRing } from '@/components/ProgressRing'
 import { MasteryBar } from '@/components/MasteryBar'
-import { approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
-import type { Profile } from '@/lib/session'
+import { approveAssignment, approveGrade, createChild, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
+import { useSession, type Profile } from '@/lib/session'
 
 const FEATURE_AI = true // flag-gated; routes through the kernel (child-summary + approvals)
 
@@ -17,7 +17,27 @@ export default function ParentHome({ profile }: { profile: Profile }) {
   const [grades, setGrades] = useState<PendingGrade[]>([])
   const [assigns, setAssigns] = useState<PendingAssignment[]>([])
   const [flash, setFlash] = useState<string | null>(null)
+  const { enterChild, reloadProfile } = useSession()
+  const [addOpen, setAddOpen] = useState(false)
+  const [nick, setNick] = useState('')
+  const [grade, setGrade] = useState('')
+  const [busy, setBusy] = useState(false)
   const childName = (id: string) => profile.children.find((c) => c.id === id)?.nickname ?? 'your child'
+
+  async function addChild(e: FormEvent) {
+    e.preventDefault()
+    if (!nick.trim()) return
+    setBusy(true)
+    const { ok, error } = await createChild(nick.trim(), grade.trim() || null)
+    setBusy(false)
+    if (!ok) { setFlash(`Could not add child: ${error}`); return }
+    setNick(''); setGrade(''); setAddOpen(false); setFlash('Child added ✓')
+    await reloadProfile()
+  }
+  async function enterHub(id: string) {
+    const err = await enterChild(id)
+    if (err) setFlash(`Could not enter: ${err}`)
+  }
 
   const load = useCallback(async () => {
     const m: Record<string, SkillMastery[]> = {}
@@ -125,9 +145,39 @@ export default function ParentHome({ profile }: { profile: Profile }) {
                 ))}
               </ul>
             ) : <p className="text-sm text-muted-foreground">No practice recorded yet.</p>}
+
+            {/* child-picker: enter a CONSENTED child's hub via the mint; else awaiting setup (Phase 3.5) */}
+            <div className="border-t border-border pt-3">
+              {c.consent_id
+                ? <button type="button" data-testid="enter-child" onClick={() => enterHub(c.id)} className="min-h-9 w-full rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground">Practice as {c.nickname}</button>
+                : (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">Awaiting setup — activate to start practice.</span>
+                    <button type="button" disabled className="min-h-9 shrink-0 rounded-full border border-border px-4 text-sm font-semibold text-muted-foreground opacity-60">Finish setup</button>
+                  </div>
+                )}
+            </div>
           </Panel>
         )
       })}
+
+      {/* Add a child — a no-email profile under this parent (consent-gated until setup) */}
+      <Panel>
+        {addOpen ? (
+          <form onSubmit={addChild} className="flex flex-col gap-2">
+            <input value={nick} onChange={(e) => setNick(e.target.value)} maxLength={40} placeholder="Child's nickname" aria-label="Child nickname" autoFocus className="min-h-10 rounded-xl border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-border-strong" />
+            <input value={grade} onChange={(e) => setGrade(e.target.value)} maxLength={8} placeholder="Grade (optional, e.g. 2)" aria-label="Grade band" className="min-h-10 rounded-xl border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-border-strong" />
+            <div className="flex gap-2">
+              <button type="submit" disabled={busy || !nick.trim()} className="min-h-9 flex-1 rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-60">{busy ? 'Adding…' : 'Add child'}</button>
+              <button type="button" onClick={() => setAddOpen(false)} className="min-h-9 rounded-full border border-border px-4 text-sm font-semibold text-foreground hover:bg-surface-muted">Cancel</button>
+            </div>
+          </form>
+        ) : (
+          <button type="button" data-testid="add-child" onClick={() => setAddOpen(true)} className="flex min-h-10 w-full items-center justify-center gap-2 rounded-full border border-dashed border-border-strong text-sm font-semibold text-muted-foreground hover:bg-surface-muted">
+            <Icon name="Plus" size={16} /> Add a child
+          </button>
+        )}
+      </Panel>
     </div>
   )
 }

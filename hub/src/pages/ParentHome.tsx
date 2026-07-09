@@ -32,6 +32,9 @@ export default function ParentHome({ profile }: { profile: Profile }) {
     setBusy(true)
     const res = await startConsentCheckout(nick.trim(), grade.trim() || null)
     if ('error' in res) { setBusy(false); setFlash(`Could not start setup: ${res.error}`); return }
+    // stamp the PRE-checkout roster size so the return-poll detects the new child
+    // even if the webhook lands before we re-mount (fast payment).
+    try { localStorage.setItem('consent_baseline', String(profile.children.length)) } catch { /* private mode */ }
     window.location.assign(res.url) // → Stripe Checkout (or, in mock, straight back to us)
   }
   async function enterHub(id: string) {
@@ -43,13 +46,15 @@ export default function ParentHome({ profile }: { profile: Profile }) {
   useEffect(() => {
     if (new URLSearchParams(window.location.search).get('consent') !== 'complete') return
     let cancelled = false
+    const stored = (() => { try { return localStorage.getItem('consent_baseline') } catch { return null } })()
+    const baseline = stored != null ? Number(stored) : profile.children.length
+    try { localStorage.removeItem('consent_baseline') } catch { /* */ }
     ;(async () => {
       setPending(true)
-      const baseline = profile.children.length
       for (let i = 0; i < 20 && !cancelled; i++) {
-        await new Promise((r) => setTimeout(r, 2000))
-        const { children } = await loadChildrenAndGrants()
+        const { children } = await loadChildrenAndGrants() // check FIRST — clears at once if already live
         if (children.length > baseline) { await reloadProfile(); break }
+        await new Promise((r) => setTimeout(r, 2000))
       }
       if (!cancelled) { setPending(false); window.history.replaceState({}, '', window.location.pathname) }
     })()

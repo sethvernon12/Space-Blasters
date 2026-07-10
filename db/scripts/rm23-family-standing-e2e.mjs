@@ -74,13 +74,14 @@ try {
   const survivesAcctDel = (await q(`select count(*)::int n from public.family_standing where parent_id=$1 and standing='suspended'`, [uids.seth]))[0].n === 1
   survivesAcctDel ? ok('family standing SURVIVES a whole-account deletion (re-signup with the same login stays suspended)') : bad('standing lost on account delete')
 
-  // ---- 5. add/delete soft-cap (Dana) ----
-  const under = await dana.client.rpc('create_pending_child', { p_nickname: 'UnderCap', p_grade_band: null })
-  // push Dana to the 30d op cap with synthetic consent grants (she has Wren = 1)
-  await q(`insert into public.consent_ledger (parent_id, child_id, action, method, policy_version) select $1, gen_random_uuid(), 'grant','other_vpc','v1' from generate_series(1,10)`, [uids.dana])
+  // ---- 5. add/delete soft-cap (Dana) — churn = DELETIONS, not adds ----
+  const under = await dana.client.rpc('create_pending_child', { p_nickname: 'UnderCap', p_grade_band: null }) // 0 deletions → allowed
+  // simulate heavy churn: 6 child deletions for Dana in the last 30d
+  await q(`insert into public.deletion_receipts (child_id, parent_id, deleting_actor, disposition, receipt_hash, status)
+           select gen_random_uuid(), $1, $1, '{}'::jsonb, 'h'||g, 'completed' from generate_series(1,6) g`, [uids.dana])
   const over = await dana.client.rpc('create_pending_child', { p_nickname: 'OverCap', p_grade_band: null })
   under.data?.ok === true && over.data?.ok === false && over.data?.error === 'add_cap_reached'
-    ? ok('add/delete soft-cap: adds allowed under the 30d cap, refused once the family exceeds it')
+    ? ok('add/delete churn cap: adds allowed with no recent deletes, refused after 6 deletions in 30d')
     : bad(`soft-cap: under=${JSON.stringify(under.data)} over=${JSON.stringify(over.data)}`)
 } finally {
   await db.end()

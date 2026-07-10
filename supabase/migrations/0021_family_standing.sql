@@ -5,12 +5,20 @@
 -- Two anti-abuse gaps from the five-lens review:
 --   * SANCTION STATE AT THE FAMILY LEVEL (not per-child) — flag events are
 --     child-subject and get hard-deleted with the child, so a sanctioned family
---     could delete + re-add a child (or delete + re-sign-up, same Google sub) to
---     reset its standing. `family_standing` is keyed to the PARENT and is NOT
---     touched by purge_child/purge_account, so standing SURVIVES deletion.
---   * ADD/DELETE SOFT-CAP per family/30d — bounds child add↔delete churn (evasion,
---     abuse) by capping ADDS (never deletes — deletion is a COPPA right) when a
---     family's recent op count is high.
+--     could delete + re-add a child to reset its standing. `family_standing` is
+--     keyed to the PARENT's auth uid and is NOT touched by purge_child/purge_account,
+--     so standing SURVIVES a child deletion AND a whole-account deletion (the
+--     parent's own rows are gone but this row persists). This closes the CHEAP
+--     churn vector (delete+re-add a child; same parent uid).
+--     RESIDUAL (tracked, SEC-REV-26): a parent who deletes their ENTIRE account and
+--     re-signs-up with Google mints a NEW auth.users.id, so this row no longer
+--     matches — the sanction is shed. High friction (full delete + re-pay Stripe per
+--     child), but to fully close it re-key standing to the STABLE provider identity
+--     (auth.identities Google `sub`) before real families rely on it.
+--   * ADD/DELETE SOFT-CAP per family/30d — bounds child add↔delete CHURN by capping
+--     ADDS (never deletes — deletion is a COPPA right) when a family has DELETED
+--     many children recently. Keyed on deletions (the churn signal), so legitimate
+--     multi-child onboarding (adds without deletes) is never blocked.
 --
 -- DEFINER HYGIENE: every function SECURITY DEFINER, set search_path='', schema-
 -- qualified, EXECUTE service-only unless a client legitimately needs read.
@@ -80,7 +88,9 @@ begin
                        else public.family_standing.muted_until end,
     updated_at = now()
   returning flags into v_flags;
-  -- escalate standing on cumulative flags (5+ suspend, 3+ limited)
+  -- escalate standing on cumulative flags. 'suspended' is the ENFORCED block
+  -- (family_muted); 'limited' is an intentional WARNING tier (surfaced to the parent
+  -- + flagged for human review) with no automatic post block yet.
   v_standing := case when v_flags >= 5 then 'suspended' when v_flags >= 3 then 'limited' else 'good' end;
   update public.family_standing set standing = v_standing where parent_id = p_parent_id;
   insert into public.audit_log (actor_id, action, child_id, decision, detail)
@@ -116,17 +126,18 @@ begin
   return jsonb_build_object('ok', true, 'event_id', v_event_id);
 end $$;
 
--- ---- family_child_ops_30d + create_pending_child override (add/delete soft-cap) -
-create or replace function public.family_child_ops_30d(p_parent_id uuid) returns int
+-- ---- family_child_deletes_30d + create_pending_child override (add/delete soft-cap)
+-- Count only DELETIONS in the window — the churn signal. Onboarding many children
+-- (adds without deletes) never trips the cap; only heavy delete↔re-add cycling does.
+create or replace function public.family_child_deletes_30d(p_parent_id uuid) returns int
 language sql stable security definer set search_path = ''
 as $$
-  select (select count(*) from public.consent_ledger where parent_id = p_parent_id and action = 'grant' and created_at > now() - interval '30 days')::int
-       + (select count(*) from public.deletion_receipts where parent_id = p_parent_id and created_at > now() - interval '30 days')::int
+  select (select count(*) from public.deletion_receipts where parent_id = p_parent_id and created_at > now() - interval '30 days')::int
 $$;
-revoke all on function public.family_child_ops_30d(uuid) from public, anon;
-grant execute on function public.family_child_ops_30d(uuid) to authenticated;
+revoke all on function public.family_child_deletes_30d(uuid) from public, anon;
+grant execute on function public.family_child_deletes_30d(uuid) to authenticated;
 
--- override 0017 create_pending_child: same body + a family/30d add-cap (adds only).
+-- override 0017 create_pending_child: same body + a family/30d churn cap (adds only).
 create or replace function public.create_pending_child(p_nickname text, p_grade_band text)
 returns jsonb language plpgsql security definer set search_path = ''
 as $$
@@ -136,9 +147,10 @@ begin
   if public.is_child_actor(v_uid) then return jsonb_build_object('ok', false, 'error', 'not_authorized'); end if;
   v_nick := left(btrim(coalesce(p_nickname, '')), 40);
   if v_nick = '' then return jsonb_build_object('ok', false, 'error', 'bad_request'); end if;
-  -- B4 soft-cap: bound add↔delete churn per family/30d (10 add+delete ops). Deletes
-  -- are never blocked (COPPA right); this caps NEW adds when a family is churning.
-  if public.family_child_ops_30d(v_uid) >= 10 then
+  -- B4 soft-cap: bound add↔delete CHURN per family/30d. A family that has DELETED
+  -- 6+ children in 30d can't start a NEW add (deletes are never blocked — COPPA
+  -- right). Onboarding many children (no deletes) is unaffected; rolling window.
+  if public.family_child_deletes_30d(v_uid) >= 6 then
     return jsonb_build_object('ok', false, 'error', 'add_cap_reached'); end if;
   perform public.cleanup_pending_children();
   if (select count(*) from public.pending_children where parent_id = v_uid) >= 20 then

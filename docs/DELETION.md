@@ -109,20 +109,25 @@ Never hand-delete resurrected rows — always replay through `purge_child`, so t
 disposition matrix, evidence retention, and receipt chain stay correct.
 
 ## Family-level standing + add/delete soft-cap (B4)
-Moderation/sanction state is **family-level** (`family_standing`, keyed to the parent
-uid), never per-child — because flag events are child-subject and hard-delete with
-the child. So a sanction **survives** both a child deletion and a whole-account
-deletion (`purge_child`/`purge_account` never touch `family_standing`); a family
-can't delete + re-add a child, or delete + re-sign-up with the same Google login, to
-reset its standing. `record_family_flag` escalates (`good`→`limited`→`suspended`) +
-optional mute; `family_muted(actor)` resolves any actor (parent OR their child) to
-the family head and gates `post_message`. A parent reads their own standing (RLS).
-`family_standing` is retained on account deletion (anti-evasion) under a LEG-05
-retention placeholder (shred wiring deferred).
+Moderation/sanction state is **family-level** (`family_standing`, keyed to the parent's
+auth uid), never per-child — because flag events are child-subject and hard-delete
+with the child. A sanction **survives** both a child deletion and a whole-account
+deletion (`purge_child`/`purge_account` never touch `family_standing`), so a family
+can't delete + re-add a child to reset its standing (the cheap churn vector — closed).
+**Residual (SEC-REV-26):** a parent who deletes their ENTIRE account and re-signs-up
+with Google mints a *new* auth uid, so the row no longer matches and the sanction is
+shed — high friction (full delete + re-pay Stripe per child), but to fully close it,
+re-key standing to the stable provider identity (Google `sub`) before real families
+rely on it. `record_family_flag` escalates `good`→`limited`(warning)→`suspended`(the
+enforced block) + optional mute; `family_muted(actor)` resolves any actor (parent OR
+their child) to the family head and gates `post_message`. A parent reads their own
+standing (RLS). `family_standing` is retained under a LEG-05 retention placeholder
+(shred wiring deferred).
 
-An **add/delete soft-cap** bounds churn: `create_pending_child` refuses a NEW add once
-a family exceeds 10 add+delete ops in 30 days (`family_child_ops_30d` = consent grants
-+ deletion receipts). Deletions are **never** capped (COPPA right); only new adds.
+An **add/delete soft-cap** bounds CHURN: `create_pending_child` refuses a NEW add once a
+family has **deleted 6+ children in 30 days** (`family_child_deletes_30d`). Onboarding
+many children (adds without deletes) is never blocked; deletions are **never** capped
+(COPPA right); rolling window.
 
 ## Legal hold
 `legal_holds` (service-only, 0018) is checked inside `purge_child`; a held child

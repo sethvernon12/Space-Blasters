@@ -20,16 +20,17 @@ const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const STEPUP_MAX_AGE = 300 // seconds — fresh Google re-auth required (5 min, LEG precedent)
 
-// Most-recent authentication time from the verified JWT. Supabase puts per-factor
-// timestamps in `amr`; fall back to `iat`. Missing/garbled -> null (fail-closed).
+// Most-recent authentication time from the verified JWT. Supabase records per-
+// factor timestamps in `amr`, which are PRESERVED across token refresh — so a
+// refreshSession() can't forge freshness. We do NOT fall back to `iat` (it resets
+// on every refresh, defeating step-up); a token with no usable amr is treated as
+// unknown -> fail-closed (reauth_required).
 function authTimeFromJwt(jwt: string): number | null {
   try {
     const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
     const amr = Array.isArray(payload?.amr) ? payload.amr : []
     const stamps = amr.map((e: { timestamp?: number }) => Number(e?.timestamp)).filter((n: number) => Number.isFinite(n))
-    if (stamps.length) return Math.max(...stamps)
-    if (Number.isFinite(Number(payload?.iat))) return Number(payload.iat)
-    return null
+    return stamps.length ? Math.max(...stamps) : null
   } catch { return null }
 }
 

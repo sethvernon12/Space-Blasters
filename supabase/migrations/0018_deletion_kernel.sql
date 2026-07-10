@@ -169,6 +169,14 @@ create policy suppressions_update on public.suppressions for update to authentic
   using (actor_id = auth.uid() and not public.actor_is_deleted(auth.uid()))
   with check (actor_id = auth.uid() and not public.actor_is_deleted(auth.uid()));
 
+-- groups is the OTHER client-writable surface keyed on auth.uid() with no children
+-- join; guard it the same way so a captured pre-purge child token can't create an
+-- orphan group after deletion. (Every remaining child-write path joins a live
+-- children row and already fails closed.)
+drop policy if exists groups_insert on public.groups;
+create policy groups_insert on public.groups for insert to authenticated
+  with check (created_by = auth.uid() and not public.actor_is_deleted(auth.uid()));
+
 -- mint TOCTOU (#SHOULD): a child with a deletion receipt can never be re-minted.
 -- (The children row is already gone so ownership fails; this is explicit tombstone
 -- defense against any re-materialization with the same child_id.)
@@ -223,6 +231,7 @@ as $$
 declare v_recent int;
 begin
   if p_parent_id is null then return jsonb_build_object('ok', false, 'error', 'bad_request'); end if;
+  delete from public.deletion_attempts where created_at < now() - interval '1 hour';  -- opportunistic TTL sweep
   select count(*) into v_recent from public.deletion_attempts
    where parent_id = p_parent_id and created_at > now() - interval '60 seconds';
   insert into public.deletion_attempts (parent_id) values (p_parent_id);
@@ -291,15 +300,18 @@ begin
     get diagnostics t_msgs = row_count;
   else t_msgs := 0; end if;
 
-  -- (c) HARD-DELETE child-private data (no inter-table FKs among these -> any order)
-  delete from public.attempts where child_id = p_child_id;                    get diagnostics d_attempts = row_count;
-  delete from public.sessions where child_id = p_child_id;                     get diagnostics d_sessions = row_count;
+  -- (c) HARD-DELETE child-private data. ORDER MATTERS: two inter-table FKs exist
+  -- (submissions.assignment_id -> assignments; attempts.session_id -> sessions),
+  -- so a REFERENCING table is deleted before the one it references, else the FK
+  -- would abort the whole atomic tx and deletion could never complete.
+  delete from public.attempts where child_id = p_child_id;                    get diagnostics d_attempts = row_count;   -- -> sessions
+  delete from public.submissions where child_id = p_child_id;                 get diagnostics d_subs = row_count;      -- -> assignments
+  delete from public.teaching_artifacts where child_id = p_child_id;          get diagnostics d_arts = row_count;      -- self-ref supersedes_id (one stmt)
   delete from public.child_skill_mastery where child_id = p_child_id;          get diagnostics d_mastery = row_count;
   delete from public.child_skill_misconception where child_id = p_child_id;    get diagnostics d_misc = row_count;
   delete from public.child_skill_assessment where child_id = p_child_id;       get diagnostics d_assess = row_count;
-  delete from public.assignments where child_id = p_child_id;                  get diagnostics d_assign = row_count;
-  delete from public.submissions where child_id = p_child_id;                  get diagnostics d_subs = row_count;
-  delete from public.teaching_artifacts where child_id = p_child_id;           get diagnostics d_arts = row_count;
+  delete from public.sessions where child_id = p_child_id;                     get diagnostics d_sessions = row_count;  -- after attempts
+  delete from public.assignments where child_id = p_child_id;                  get diagnostics d_assign = row_count;    -- after submissions
   delete from public.child_session_mints where child_id = p_child_id;          get diagnostics d_mints = row_count;
   delete from public.tutor_grants where child_id = p_child_id;                 get diagnostics d_grants = row_count;
   delete from public.memberships where member_child_id = p_child_id;           get diagnostics d_mem = row_count;
@@ -325,6 +337,9 @@ begin
     'tombstoned', jsonb_build_object('authored_messages', t_msgs),
     'retained', jsonb_build_array('consent_ledger', 'audit_log', 'stripe_events', 'deletion_receipts'),
     'entitlement', v_ent);
+  -- serialize receipt insertion so the hash chain stays strictly linear (no fork
+  -- under concurrent deletes of different children)
+  perform pg_advisory_xact_lock(hashtext('deletion_receipts_chain'));
   select receipt_hash into v_prev_hash from public.deletion_receipts order by created_at desc, id desc limit 1;
   v_hash := encode(extensions.digest(convert_to(
       coalesce(v_prev_hash, '') || '|' || p_child_id::text || '|' || p_parent_id::text || '|' ||

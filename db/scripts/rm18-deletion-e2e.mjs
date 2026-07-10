@@ -54,6 +54,12 @@ await q(`insert into public.events (kind, author_actor_id, group_id, context_ref
 await q(`insert into public.events (kind, author_actor_id, subject_child_id, payload) values ('completion',$1,$2,'{}'::jsonb)`, [uids.seth, CID.Brielle])
 // baseline: a LIVE child can create a suppression (the zombie guard only blocks post-deletion)
 const supBase = await brielle.client.from('suppressions').insert({ actor_id: brielleUid, target_kind: 'channel', target_id: uuid(), scope: 'notify' })
+// Theo gets an assignment + a submission LINKED to it — exercises the inter-table
+// FK (submissions.assignment_id -> assignments): purge must delete submissions
+// before assignments or the whole tx FK-aborts and deletion is impossible.
+const skillId = (await q(`select id from public.skills limit 1`))[0].id
+const theoAsg = (await q(`insert into public.assignments (child_id, assigned_by, skill_id, title) values ($1,$2,$3,'Practice') returning id`, [CID.Theo, uids.seth, skillId]))[0].id
+await q(`insert into public.submissions (child_id, skill_id, client_submission_id, assignment_id) values ($1,$2,$3,$4)`, [CID.Theo, skillId, uuid(), theoAsg])
 
 const envFile = path.join(root, 'supabase', '.env.rm18'); fs.writeFileSync(envFile, `# rm18\n`)
 const fnServe = spawn('supabase', ['functions', 'serve', '--env-file', envFile], { cwd: root, stdio: 'ignore', env: process.env })
@@ -141,11 +147,13 @@ try {
   const zAtt = await zombie.rpc('record_attempts_authed', { p_child_id: CID.Brielle, p_batch: buildBatch([ev()]) })
   const zAttRows = (await q(`select count(*)::int n from public.attempts where child_id=$1`, [CID.Brielle]))[0].n
   const zSup = await zombie.from('suppressions').insert({ actor_id: brielleUid, target_kind: 'channel', target_id: uuid(), scope: 'notify' })
+  const zGrp = await zombie.from('groups').insert({ purpose: 'family', name: 'zombie group', created_by: brielleUid })
   const zSelf = await zombie.from('children').select('id')
   const supAfter = (await q(`select count(*)::int n from public.suppressions where actor_id=$1`, [brielleUid]))[0].n
-  supBase.error == null && zAttRows === 0 && zSup.error != null && supAfter === 1 && (zSelf.data ?? []).length === 0
-    ? ok('captured child token: attempts write no-ops, suppression insert DENIED (tombstone guard), self-read empty')
-    : bad(`zombie: attRows=${zAttRows} supErr=${!!zSup.error} supAfter=${supAfter} self=${(zSelf.data ?? []).length}`)
+  const grpAfter = (await q(`select count(*)::int n from public.groups where created_by=$1`, [brielleUid]))[0].n
+  supBase.error == null && zAttRows === 0 && zSup.error != null && zGrp.error != null && supAfter === 1 && grpAfter === 0 && (zSelf.data ?? []).length === 0
+    ? ok('captured child token: attempts no-op, suppression + group inserts DENIED (tombstone guard on every auth.uid()-only surface), self-read empty')
+    : bad(`zombie: attRows=${zAttRows} supErr=${!!zSup.error} grpErr=${!!zGrp.error} supAfter=${supAfter} grpAfter=${grpAfter} self=${(zSelf.data ?? []).length}`)
 
   // ---- AC-3 replay idempotent (no 2nd revoke) ----
   console.log('AC-3 replay idempotent:')
@@ -162,17 +170,29 @@ try {
     ? ok('parent reads their own receipt (hash + disposition); another family sees nothing') : bad(`receipt vis: seth=${sethSees.length} dana=${danaSees.length}`)
 
   // ---- AC-2: receipt is immutable + hash-chained (delete Theo → chains to Brielle) ----
-  console.log('AC-2 immutability + hash chain:')
+  // Theo holds an assignment + a submission linked to it → proves the inter-table
+  // FK ordering (submissions before assignments) so deletion actually completes.
+  console.log('AC-2 immutability + hash chain (+ assignment/submission FK order):')
   const delTheo = await invoke(seth.session.access_token, { childId: CID.Theo })
+  const theoLeft = (await q(`select (select count(*) from public.submissions where child_id=$1) s, (select count(*) from public.assignments where child_id=$1) a`, [CID.Theo]))[0]
+  const theoPurged = Number(theoLeft.s) === 0 && Number(theoLeft.a) === 0
   const chain = (await q(`select child_id, prev_receipt_hash, receipt_hash from public.deletion_receipts order by created_at`, []))
   const bR = chain.find((r) => r.child_id === CID.Brielle), tR = chain.find((r) => r.child_id === CID.Theo)
-  const chained = tR && bR && tR.prev_receipt_hash === bR.receipt_hash
+  const chained = tR && bR && tR.prev_receipt_hash === bR.receipt_hash && theoPurged
   let immutable = false
   try { await q(`update public.deletion_receipts set parent_id=$1 where child_id=$2`, [uids.dana, CID.Brielle]) } catch { immutable = true }
   let undeletable = false
   try { await q(`delete from public.deletion_receipts where child_id=$1`, [CID.Brielle]) } catch { undeletable = true }
   delTheo.status === 200 && chained && immutable && undeletable
     ? ok('Theo receipt chains to Brielle receipt_hash; receipt update + delete both blocked') : bad(`AC-2: chained=${chained} immutable=${immutable} undeletable=${undeletable}`)
+
+  // ---- AC-6 schema backstop: EVERY children FK is RESTRICT (a future CASCADE
+  //      table can't silently bypass the children-last completeness guard) ----
+  console.log('AC-6 schema backstop:')
+  const nonRestrict = await q(`select conrelid::regclass::text tbl from pg_constraint where contype='f' and confrelid='public.children'::regclass and confdeltype<>'r'`)
+  nonRestrict.length === 0
+    ? ok('every FK to children is ON DELETE RESTRICT — a forgotten future table FK-blocks the final delete loudly')
+    : bad(`AC-6 schema: non-RESTRICT FKs to children: ${JSON.stringify(nonRestrict)}`)
 
   // ---- AC-9 siblings + other family untouched ----
   console.log('AC-9 isolation:')

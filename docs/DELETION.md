@@ -48,6 +48,33 @@ Safety invariants (tested in `rm20`):
 - A deletion receipt is shredded **only after it is exported off-DB** (`receipt_exports`)
   — retention can never destroy the last replay source.
 
+## Scheduled workers + external purge (B2)
+`maintenance-worker` (Edge fn, `verify_jwt=false` + `X-Maintenance-Secret` shared
+secret, fail-closed) is the system worker that DRIVES the mechanisms above. It is
+invoked by a scheduler — **pg_cron** (via `pg_net` calling the function with the
+secret) or the platform scheduler — wired at deploy; nothing runs it automatically
+until then. Each pass, all best-effort/isolated:
+1. **External purge drain** — every deletion enqueues `(child_id, 'storage'|'ai')`
+   into `external_purge_queue` via an AFTER-INSERT trigger on `deletion_receipts`
+   (covers child / account / dormant / PITR-replay paths). The worker leases rows
+   (`claim_external_purge`, SKIP LOCKED), runs `_shared/purge-external.ts`
+   (`purgeStorage` + `purgeAiProvider` — **fail-closed mocks** until Phase 4/5
+   uploads+AI exist), and marks done/failed (`complete_external_purge`); failures
+   retry next pass.
+2. **GoTrue reconcile** — deletes straggler users for child (`list_pending_auth_cleanup`)
+   and account (`list_pending_account_auth_cleanup`) receipts left `pending_auth_cleanup`,
+   then completes them.
+3. **Orphan sweep** — deletes `@child.invalid` users older than a grace window with
+   no `children` row (a webhook that crashed after `createUser`).
+4. **pending_children TTL** cleanup.
+5. **Retention** — `expire_retained_evidence`, **opt-in only** (`body.retention:true`);
+   destructive, gated behind the LEG-05 attorney numbers, OFF by default.
+6. **Dormant** — `list_dormant_families(cutoff)`: **report only** (count). Auto-purge
+   of dormant families is a deliberate later step, never automatic here.
+
+Suggested schedule (deploy-time): drain+reconcile+orphan+pending every ~15 min;
+retention monthly (once LEG-05 is set); dormant report weekly.
+
 ## Off-DB anchor + parent email
 On completion, `delete-child`/`delete-account` call the fail-closed `_shared/notify.ts`:
 `exportReceipt` (durable off-DB copy of the opaque receipt id + hash — the PITR

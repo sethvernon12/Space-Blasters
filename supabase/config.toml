@@ -439,3 +439,8 @@ verify_jwt = true
 # Whole-account deletion — same parent-only step-up gate; routes through purge_child.
 [functions.delete-account]
 verify_jwt = true
+
+# Scheduled system worker (cron target). No user JWT — a shared-secret header IS the
+# auth (fail-closed), same doctrine as stripe-webhook.
+[functions.maintenance-worker]
+verify_jwt = false

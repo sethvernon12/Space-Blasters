@@ -77,9 +77,12 @@ export async function loadDeletionReceipt(receiptId: string): Promise<DeletionRe
 }
 
 // Does this child's profile still exist for the caller? Used by the child hub to
-// detect a mid-session deletion and show a gentle screen instead of an error.
+// detect a mid-session deletion. Fail-OPEN on a transient error (assume still
+// present) so a network blip never flips a live child to the "removed" screen —
+// only a definitive "no row, no error" means deleted.
 export async function childExists(childId: string): Promise<boolean> {
-  const { data } = await supabase.from('children').select('id').eq('id', childId).maybeSingle()
+  const { data, error } = await supabase.from('children').select('id').eq('id', childId).maybeSingle()
+  if (error) return true // unknown -> treat as present; the next successful check decides
   return !!data
 }
 

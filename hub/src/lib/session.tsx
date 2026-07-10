@@ -103,7 +103,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase.auth.signInWithPassword({ email, password: PW })
       return error ? error.message : null
     }
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.href } })
+    // prompt=login forces Google to re-authenticate — a live SSO session must not
+    // silently satisfy step-up on a shared family device (real re-proof required).
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.href, queryParams: { prompt: 'login' } } })
     return error ? error.message : null // (redirects away on success)
   }, [session])
 

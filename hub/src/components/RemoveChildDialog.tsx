@@ -114,6 +114,17 @@ export function RemoveChildDialog({ childId, nickname, onClose, onDeleted }: {
           </div>
         )}
 
+        {step === 'done' && !receipt && (
+          <div className="flex flex-col gap-3" data-testid="deletion-done">
+            <div className="flex items-center gap-2">
+              <span style={{ color: 'var(--success)' }}><Icon name="CheckCircle2" size={20} /></span>
+              <h2 className="text-lg font-bold text-foreground">{nickname}’s account was deleted</h2>
+            </div>
+            <p className="text-sm text-muted-foreground">Your receipt is being finalized — you’ll find it in your records shortly.</p>
+            <button type="button" onClick={onClose} className="min-h-10 rounded-full border border-border px-4 text-sm font-semibold text-foreground hover:bg-surface-muted">Done</button>
+          </div>
+        )}
+
         {step === 'done' && receipt && (
           <div className="flex flex-col gap-3" data-testid="deletion-receipt">
             <div className="flex items-center gap-2">

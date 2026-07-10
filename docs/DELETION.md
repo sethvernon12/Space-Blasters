@@ -59,13 +59,16 @@ until then. Each pass, all best-effort/isolated:
    (covers child / account / dormant / PITR-replay paths). The worker leases rows
    (`claim_external_purge`, SKIP LOCKED), runs `_shared/purge-external.ts`
    (`purgeStorage` + `purgeAiProvider` — **fail-closed mocks** until Phase 4/5
-   uploads+AI exist), and marks done/failed (`complete_external_purge`); failures
-   retry next pass.
+   uploads+AI exist), and marks done/failed (`complete_external_purge`); a failure
+   stays `pending` and is retried next pass, up to an attempt cap (then parked
+   `failed` for ops — should alarm).
 2. **GoTrue reconcile** — deletes straggler users for child (`list_pending_auth_cleanup`)
    and account (`list_pending_account_auth_cleanup`) receipts left `pending_auth_cleanup`,
-   then completes them.
-3. **Orphan sweep** — deletes `@child.invalid` users older than a grace window with
-   no `children` row (a webhook that crashed after `createUser`).
+   completing a receipt ONLY once every relevant user is confirmed gone (a transient
+   delete failure leaves it pending, retried next pass).
+3. **Orphan sweep** — deletes `@child.invalid` users older than a FIXED grace window
+   (not caller-tunable) with no `children` row (a webhook that crashed after
+   `createUser`). Scans the first page (1000 users) per pass — paginate before scale.
 4. **pending_children TTL** cleanup.
 5. **Retention** — `expire_retained_evidence`, **opt-in only** (`body.retention:true`);
    destructive, gated behind the LEG-05 attorney numbers, OFF by default.

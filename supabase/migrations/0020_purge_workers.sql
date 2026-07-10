@@ -69,14 +69,20 @@ grant execute on function public.claim_external_purge(int) to service_role;
 create or replace function public.complete_external_purge(p_id uuid, p_ok boolean, p_error text default null)
 returns jsonb language plpgsql security definer set search_path = ''
 as $$
+declare v_attempts int; v_max constant int := 10;
 begin
   if p_id is null then return jsonb_build_object('ok', false, 'error', 'bad_request'); end if;
+  -- on failure keep the row RETRIABLE ('pending' → re-leased next pass) until it has
+  -- burned v_max attempts, then park it 'failed' (terminal → needs ops attention).
+  select attempts into v_attempts from public.external_purge_queue where id = p_id;
   update public.external_purge_queue
-     set status = case when p_ok then 'done' else 'failed' end,
+     set status = case when p_ok then 'done'
+                       when coalesce(v_attempts, 0) >= v_max then 'failed'
+                       else 'pending' end,
          last_error = case when p_ok then null else left(coalesce(p_error, 'error'), 500) end,
          updated_at = now()
    where id = p_id;
-  return jsonb_build_object('ok', true);
+  return jsonb_build_object('ok', true, 'terminal', (not p_ok and coalesce(v_attempts, 0) >= v_max));
 end $$;
 revoke all on function public.complete_external_purge(uuid, boolean, text) from public, anon, authenticated;
 grant execute on function public.complete_external_purge(uuid, boolean, text) to service_role;

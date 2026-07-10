@@ -26,6 +26,17 @@ const ORPHAN_GRACE_MS = 60 * 60 * 1000 // 1h — never sweep an in-flight just-c
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 
+// Delete a GoTrue user, returning true ONLY if it is actually gone (deleted now, or
+// already absent). A transient error (network/5xx, user still present) returns false
+// so the caller leaves the receipt pending_auth_cleanup for the next pass — never
+// flip a receipt to 'completed' while a loginable identity still exists (MEDIUM-3).
+async function ensureUserGone(service: ReturnType<typeof createClient>, id: string): Promise<boolean> {
+  const { error } = await service.auth.admin.deleteUser(id)
+  if (!error) return true
+  const { data } = await service.auth.admin.getUserById(id)
+  return !data?.user
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method_not_allowed', { status: 405 })
   // shared-secret auth, fail-closed + constant-ish time compare
@@ -51,34 +62,40 @@ Deno.serve(async (req) => {
     out.external_purge = { done, failed }
   } catch (e) { out.external_purge = { error: String((e as Error).message) } }
 
-  // 2a. child GoTrue reconcile
+  // 2a. child GoTrue reconcile — complete ONLY when the user is confirmed gone
   try {
     const { data: pend } = await service.rpc('list_pending_auth_cleanup')
     let n = 0
-    for (const r of (pend ?? [])) { try { await service.auth.admin.deleteUser(r.child_auth_user_id) } catch { /* may be gone */ } await service.rpc('complete_child_deletion', { p_child_auth_user_id: r.child_auth_user_id }); n++ }
+    for (const r of (pend ?? [])) {
+      if (await ensureUserGone(service, r.child_auth_user_id)) { await service.rpc('complete_child_deletion', { p_child_auth_user_id: r.child_auth_user_id }); n++ }
+    }
     out.child_reconcile = n
   } catch (e) { out.child_reconcile = { error: String((e as Error).message) } }
 
-  // 2b. account GoTrue reconcile (children + parent)
+  // 2b. account GoTrue reconcile (children + parent) — complete ONLY if ALL gone
   try {
     const { data: pend } = await service.rpc('list_pending_account_auth_cleanup')
     let n = 0
     for (const r of (pend ?? [])) {
-      for (const cid of (r.child_auth_user_ids ?? [])) { try { await service.auth.admin.deleteUser(cid) } catch { /* */ } }
-      if (r.parent_auth_user_id) { try { await service.auth.admin.deleteUser(r.parent_auth_user_id) } catch { /* */ } }
-      await service.rpc('complete_account_deletion', { p_parent_auth_user_id: r.parent_auth_user_id }); n++
+      let allGone = true
+      for (const cid of (r.child_auth_user_ids ?? [])) if (!(await ensureUserGone(service, cid))) allGone = false
+      const parentGone = r.parent_auth_user_id ? await ensureUserGone(service, r.parent_auth_user_id) : true
+      if (allGone && parentGone) { await service.rpc('complete_account_deletion', { p_parent_auth_user_id: r.parent_auth_user_id }); n++ }
+      // else: leave pending_auth_cleanup — a straggler parent identity must not be
+      // reported completed; retried next pass (MEDIUM-3).
     }
     out.account_reconcile = n
   } catch (e) { out.account_reconcile = { error: String((e as Error).message) } }
 
-  // 3. orphan @child.invalid sweep (older than the grace window, no children row)
+  // 3. orphan @child.invalid sweep — FIXED grace window (not caller-tunable: a body
+  // knob below the webhook window could sweep an in-flight just-created child).
+  // NOTE: scans the first page only (perPage 1000); paginate before large scale.
   try {
-    const graceMs = Number.isFinite(Number(body?.orphan_grace_ms)) ? Number(body.orphan_grace_ms) : ORPHAN_GRACE_MS
     const { data: list } = await service.auth.admin.listUsers({ page: 1, perPage: 1000 })
     let swept = 0
     for (const u of (list?.users ?? [])) {
       if (!u.email?.endsWith('@child.invalid')) continue
-      if (Date.now() - new Date(u.created_at).getTime() < graceMs) continue
+      if (Date.now() - new Date(u.created_at).getTime() < ORPHAN_GRACE_MS) continue
       const { data: kid } = await service.from('children').select('id').eq('auth_user_id', u.id).maybeSingle()
       if (!kid) { try { await service.auth.admin.deleteUser(u.id); swept++ } catch { /* */ } }
     }

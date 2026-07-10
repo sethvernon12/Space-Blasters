@@ -88,16 +88,17 @@ try {
     ? ok('worker: account straggler — parent + child GoTrue users deleted; account receipt → completed')
     : bad(`account reconcile: acctReceipt=${acctReceipt?.status} w2=${JSON.stringify(w2.body?.account_reconcile)}`)
 
-  // ---- 4. orphan sweep (grace-gated) ----
+  // ---- 4. orphan sweep (FIXED grace, not caller-tunable) ----
   console.log('orphan @child.invalid sweep:')
   const orphan = (await admin.auth.admin.createUser({ email: `c_${uuid()}@child.invalid`, password: uuid() + uuid(), email_confirm: true })).data.user
-  const wFresh = await runWorker({}) // default 1h grace → fresh orphan NOT swept
+  const wFresh = await runWorker({}) // fresh (< 1h) → protected, NOT swept
   const orphanKeptFresh = await userExists(orphan.id)
-  const wGrace0 = await runWorker({ orphan_grace_ms: 0 }) // grace 0 → swept
+  await q(`update auth.users set created_at = now() - interval '2 hours' where id = $1`, [orphan.id]) // age past the 1h grace
+  const wAged = await runWorker({})
   const orphanGone = !(await userExists(orphan.id))
-  orphanKeptFresh && orphanGone && wGrace0.body?.orphans_swept >= 1
-    ? ok('orphan sweep respects the grace window (fresh kept), then removes it with grace=0')
-    : bad(`orphan: keptFresh=${orphanKeptFresh} gone=${orphanGone} swept=${JSON.stringify(wGrace0.body?.orphans_swept)}`)
+  orphanKeptFresh && orphanGone && wAged.body?.orphans_swept >= 1
+    ? ok('orphan sweep respects the fixed grace window (fresh kept), removes it once aged past the window')
+    : bad(`orphan: keptFresh=${orphanKeptFresh} gone=${orphanGone} swept=${JSON.stringify(wAged.body?.orphans_swept)} wFresh=${JSON.stringify(wFresh.body?.orphans_swept)}`)
 
   // ---- 5. pending_children TTL + retention opt-in + dormant report ----
   console.log('pending cleanup / retention opt-in / dormant report:')

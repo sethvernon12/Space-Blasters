@@ -431,3 +431,7 @@ verify_jwt = true
 # Stripe sends no Supabase JWT — the HMAC signature IS the authentication.
 [functions.stripe-webhook]
 verify_jwt = false
+
+# Parent-only, step-up re-auth required (auth_time freshness checked in-function).
+[functions.delete-child]
+verify_jwt = true

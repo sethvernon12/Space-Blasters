@@ -55,6 +55,7 @@ export const FILES_M3 = [
   'supabase/migrations/0015_child_provisioning.sql',
   'supabase/migrations/0016_consent_kernel.sql',
   'supabase/migrations/0017_consent_minimize.sql',
+  'supabase/migrations/0018_deletion_kernel.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

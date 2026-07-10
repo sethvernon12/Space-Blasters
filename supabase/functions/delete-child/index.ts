@@ -19,27 +19,12 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const URL_ = Deno.env.get('SUPABASE_URL')!
 const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const STEPUP_MAX_AGE = 300 // seconds — fresh Google re-auth required (5 min, LEG precedent)
-
-// Most-recent authentication time from the verified JWT. Supabase records per-
-// factor timestamps in `amr`, which are PRESERVED across token refresh — so a
-// refreshSession() can't forge freshness. We do NOT fall back to `iat` (it resets
-// on every refresh, defeating step-up); a token with no usable amr is treated as
-// unknown -> fail-closed (reauth_required).
-function authTimeFromJwt(jwt: string): number | null {
-  try {
-    const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-    const amr = Array.isArray(payload?.amr) ? payload.amr : []
-    const stamps = amr.map((e: { timestamp?: number }) => Number(e?.timestamp)).filter((n: number) => Number.isFinite(n))
-    return stamps.length ? Math.max(...stamps) : null
-  } catch { return null }
-}
+const STEPUP_MAX_AGE = 300 // seconds — fresh re-auth required (5 min, LEG precedent)
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const auth = req.headers.get('Authorization') ?? ''
   if (!auth) return json({ error: 'unauthenticated' }, 401)
-  const jwt = auth.replace(/^Bearer\s+/i, '')
 
   // 1) authenticate the caller
   const caller = createClient(URL_, ANON, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } })
@@ -47,9 +32,13 @@ Deno.serve(async (req) => {
   if (!who?.user) return json({ error: 'unauthenticated' }, 401)
   const parentUid = who.user.id
 
-  // 2) STEP-UP: require fresh re-auth (MUST-FIX #5) — fail-closed if unknown
-  const at = authTimeFromJwt(jwt)
-  if (at === null || (Math.floor(Date.now() / 1000) - at) > STEPUP_MAX_AGE) {
+  // 2) STEP-UP: require a RECENT actual sign-in. last_sign_in_at advances on every
+  //    real sign-in — password OR a Google OAuth re-auth — but NOT on a silent token
+  //    refresh, so it's the correct cross-provider "authenticated recently" signal.
+  //    (The JWT `amr` timestamp does NOT advance on a Google re-auth, which looped.)
+  //    Fail-closed if absent/unparseable.
+  const lastSignInMs = who.user.last_sign_in_at ? Date.parse(who.user.last_sign_in_at) : NaN
+  if (!Number.isFinite(lastSignInMs) || (Date.now() - lastSignInMs) > STEPUP_MAX_AGE * 1000) {
     return json({ error: 'reauth_required' }, 401)
   }
 

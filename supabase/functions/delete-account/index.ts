@@ -19,14 +19,6 @@ const ANON = Deno.env.get('SUPABASE_ANON_KEY')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const STEPUP_MAX_AGE = 300 // seconds — fresh re-auth required (5 min)
 
-function authTimeFromJwt(jwt: string): number | null {
-  try {
-    const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-    const amr = Array.isArray(payload?.amr) ? payload.amr : []
-    const stamps = amr.map((e: { timestamp?: number }) => Number(e?.timestamp)).filter((n: number) => Number.isFinite(n))
-    return stamps.length ? Math.max(...stamps) : null
-  } catch { return null }
-}
 async function delUserWithRetry(service: ReturnType<typeof createClient>, id: string): Promise<boolean> {
   for (let i = 0; i < 3; i++) { const { error } = await service.auth.admin.deleteUser(id); if (!error) return true }
   return false
@@ -36,16 +28,21 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const auth = req.headers.get('Authorization') ?? ''
   if (!auth) return json({ error: 'unauthenticated' }, 401)
-  const jwt = auth.replace(/^Bearer\s+/i, '')
 
   const caller = createClient(URL_, ANON, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } })
   const { data: who } = await caller.auth.getUser()
   if (!who?.user) return json({ error: 'unauthenticated' }, 401)
   const parentUid = who.user.id
 
-  // STEP-UP: fresh re-auth (fail-closed if unknown)
-  const at = authTimeFromJwt(jwt)
-  if (at === null || (Math.floor(Date.now() / 1000) - at) > STEPUP_MAX_AGE) return json({ error: 'reauth_required' }, 401)
+  // STEP-UP: require a RECENT actual sign-in. last_sign_in_at advances on every real
+  // sign-in — password OR a Google OAuth re-auth — but NOT on a silent token refresh,
+  // so it's the correct cross-provider "authenticated recently" signal. (The JWT
+  // `amr` timestamp does NOT advance on a Google re-auth, which made the old check
+  // loop forever after the OAuth redirect.) Fail-closed if absent/unparseable.
+  const lastSignInMs = who.user.last_sign_in_at ? Date.parse(who.user.last_sign_in_at) : NaN
+  if (!Number.isFinite(lastSignInMs) || (Date.now() - lastSignInMs) > STEPUP_MAX_AGE * 1000) {
+    return json({ error: 'reauth_required' }, 401)
+  }
 
   // a child actor can never delete an account
   const { data: amChild } = await caller.rpc('is_child_actor', { p_uid: parentUid })

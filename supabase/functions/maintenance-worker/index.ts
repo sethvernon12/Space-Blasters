@@ -30,10 +30,18 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 // already absent). A transient error (network/5xx, user still present) returns false
 // so the caller leaves the receipt pending_auth_cleanup for the next pass — never
 // flip a receipt to 'completed' while a loginable identity still exists (MEDIUM-3).
+const isNotFound = (e: unknown): boolean => {
+  const st = (e as { status?: number })?.status
+  return st === 404 || /not[\s_]?found/i.test((e as { message?: string })?.message ?? '')
+}
 async function ensureUserGone(service: ReturnType<typeof createClient>, id: string): Promise<boolean> {
   const { error } = await service.auth.admin.deleteUser(id)
   if (!error) return true
-  const { data } = await service.auth.admin.getUserById(id)
+  if (isNotFound(error)) return true // already gone
+  // deleteUser failed for another reason — CONFIRM absence, don't assume it
+  const { data, error: getErr } = await service.auth.admin.getUserById(id)
+  if (isNotFound(getErr)) return true // confirmed gone
+  if (getErr) return false // transient/unknown → NOT confirmed gone (retry next pass)
   return !data?.user
 }
 

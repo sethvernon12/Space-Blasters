@@ -66,6 +66,20 @@ VITE_ALLOW_DEV_SIGNIN       = true                    # synthetic staging keeps 
 - **DB isolation + smoke:** with the DEV secrets exported, `node db/scripts/dev-verify.mjs` — seeds synthetic + asserts **0 cross-family leaks**, scope, cross-family write denied, proposal-behind-approval, and consent-revocation cuts access. (The full 7×7×3 matrix is proven locally by `family-b3-matrix` on the identical migrations.)
 - **Browser smoke:** open the staging URL → pass the gate → sign in as each synthetic role → confirm the three cockpits render and the AI summary / grade-approve / assignment-deliver flows work against DEV.
 
+## STEP 6 — bundle verification (deploy provenance)
+Never infer what shipped — verify the **content-hashed asset actually served by the live HTML**, in one pass, and record its hash in the deploy log.
+
+- **Provenance + safety scan (post-deploy, on the live URL):**
+  ```
+  node scripts/verify-bundle.mjs https://theallaroundathleteacademy.com
+  ```
+  Fetches the live HTML → the `/assets/index-<hash>.js` it references → and asserts, recording the **asset sha256**: a POSITIVE control present (`with Google` = the real flag-off Google front door), NEGATIVE markers absent (`@local.test`, `localtest123`, `Sign in as` = dev switcher tree-shaken, no synthetic creds), and SECRET patterns absent (`sk_test_`/`sk_live_`/`whsec_`/`GOCSPX-`/`service_role`, plus a decode of every embedded JWT to catch a service-role key). Non-zero exit on any miss/hit.
+- **Flag guard (pre-deploy / CI):**
+  ```
+  node scripts/verify-flag-off.mjs
+  ```
+  The dev switcher is gated on a STRICT `VITE_ALLOW_DEV_SIGNIN === 'true'` (session.tsx) — a naive truthiness check would read the STRING `"false"` as ON and leak the switcher + synthetic creds into the real build. This guard moves any local `hub/.env.local` aside (so the shell env is the only source), builds under `"false"` / unset / `"true"`, and asserts OFF / OFF / ON respectively (catches both the truthy-string trap and a tree-shaking regression). Note: a local `hub/.env.local` with `VITE_ALLOW_DEV_SIGNIN=true` will make a plain local flag-off build look "dirty" — always verify against the **deployed** asset, never a local build.
+
 ---
 
 ## Rollback

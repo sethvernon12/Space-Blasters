@@ -60,25 +60,27 @@ try {
   // client-writable). Theo stays live through this step (deleted later in step 3).
   const oldRef = (await q(`insert into public.consent_ledger (parent_id, child_id, action, method, policy_version, created_at) values ($1,$2,'grant','other_vpc','v1', now()-interval '9 years') returning id`, [uids.seth, CID.Theo]))[0].id
   await q(`update public.children set consent_id=$1 where id=$2`, [oldRef, CID.Theo])
-  // a deletion receipt past window but NOT exported (must survive) vs exported (must shred)
-  const kidGone = uuid(), kidExp = uuid()
-  const mkReceipt = async (cid, exported) => {
+  // a past-window receipt: NOT exported (survive) vs MOCK export (survive — mock
+  // doesn't count) vs REAL export (shred). Retention requires a non-mock sink.
+  const mkReceipt = async (cid, sink) => {
     const rid = (await q(`insert into public.deletion_receipts (child_id, parent_id, deleting_actor, disposition, receipt_hash, status, created_at, db_purged_at)
       values ($1,$2,$3,'{}'::jsonb, $4, 'completed', now()-interval '9 years', now()-interval '9 years') returning id`, [cid, uids.seth, uids.seth, 'h_' + cid.slice(0, 8)]))[0].id
-    if (exported) await q(`insert into public.receipt_exports (receipt_id, sink) values ($1,'mock')`, [rid])
+    if (sink) await q(`insert into public.receipt_exports (receipt_id, sink) values ($1,$2)`, [rid, sink])
     return rid
   }
-  const rUnexported = await mkReceipt(kidGone, false)
-  const rExported = await mkReceipt(kidExp, true)
+  const rUnexported = await mkReceipt(uuid(), null)
+  const rMock = await mkReceipt(uuid(), 'mock')
+  const rExported = await mkReceipt(uuid(), 'external')
   const shred = (await q(`select public.expire_retained_evidence(now()) r`))[0].r.shredded
   const unrefGone = (await q(`select count(*)::int n from public.consent_ledger where id=$1`, [oldUnref]))[0].n === 0
   const recentKept = (await q(`select count(*)::int n from public.consent_ledger where id=$1`, [recentCL]))[0].n === 1
   const refKept = (await q(`select count(*)::int n from public.consent_ledger where id=$1`, [oldRef]))[0].n === 1
   const unexpKept = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rUnexported]))[0].n === 1
+  const mockKept = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rMock]))[0].n === 1
   const expShredded = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rExported]))[0].n === 0
-  unrefGone && recentKept && refKept && unexpKept && expShredded
-    ? ok(`shred: old unreferenced gone, recent kept, live-child consent protected, receipt shredded ONLY if exported (${JSON.stringify(shred)})`)
-    : bad(`retention: unrefGone=${unrefGone} recentKept=${recentKept} refKept=${refKept} unexpKept=${unexpKept} expShredded=${expShredded}`)
+  unrefGone && recentKept && refKept && unexpKept && mockKept && expShredded
+    ? ok(`shred: old unreferenced gone, recent kept, live-child consent protected, receipt shredded ONLY after a REAL (non-mock) export (${JSON.stringify(shred)})`)
+    : bad(`retention: unrefGone=${unrefGone} recentKept=${recentKept} refKept=${refKept} unexpKept=${unexpKept} mockKept=${mockKept} expShredded=${expShredded}`)
 
   // ---- 2. ONE PATH: delete-account (Dana) routes Wren through purge_child ----
   console.log('account deletion through the kernel:')
@@ -94,6 +96,19 @@ try {
   del.status === 200 && del.body?.ok && wrenGone && danaKids && acctReceipt?.status === 'completed' && acctReceipt?.child_count === 1 && !acctReceipt?.leak && !wrenUser.data?.user && !danaUser.data?.user && exported && alphaIntact
     ? ok('delete-account → Wren purged via kernel, opaque account receipt, child+parent GoTrue users deleted, receipt exported, Alpha untouched')
     : bad(`account: ${JSON.stringify({ st: del.status, wrenGone, danaKids, acctReceipt, wrenUser: !!wrenUser.data?.user, danaUser: !!danaUser.data?.user, exported, alphaIntact })}`)
+
+  // ---- 2b. HIGH-1: a legal hold on ONE child blocks the WHOLE account delete,
+  //          destroying NOTHING (no committed partial purge) ----
+  console.log('legal hold blocks account deletion (no partial destruction):')
+  await q(`insert into public.legal_holds (child_id, reason, placed_by) values ($1,'hold',$2)`, [CID.Theo, uids.seth])
+  const sethHold = await signInAs(cfg, A.parent.email)
+  const held = await invoke(sethHold.session.access_token, 'delete-account', {})
+  const bothAlive = (await q(`select count(*)::int n from public.children where parent_id=$1`, [uids.seth]))[0].n === 2
+  const noAcctReceipt = (await q(`select count(*)::int n from public.account_deletion_receipts where parent_id=$1`, [uids.seth]))[0].n === 0
+  held.status === 423 && held.body?.error === 'legal_hold' && bothAlive && noAcctReceipt
+    ? ok('account delete under a child hold → 423; BOTH children survive, no account receipt (nothing destroyed)')
+    : bad(`legal hold: status=${held.status} bothAlive=${bothAlive} noAcctReceipt=${noAcctReceipt}`)
+  await q(`update public.legal_holds set released_at=now() where child_id=$1`, [CID.Theo])
 
   // ---- 3. EXPORT hook on delete-child ----
   console.log('delete-child export hook:')

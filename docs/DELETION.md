@@ -19,9 +19,12 @@ Everything routes through **`purge_child`** (migration 0018):
 Disposition per table lives in `0018` (hard-delete child-private; tombstone
 child/parent-authored shared messages; retain `consent_ledger`/`audit_log`/
 `stripe_events` as de-FK'd evidence). Receipts are immutable, hash-chained
-(both `deletion_receipts` and `account_deletion_receipts` chain into one line),
-and **opaque** — the nickname is embedded only at download/display time, never
-stored.
+(advisory-lock-serialized), and **opaque** — the nickname is embedded only at
+download/display time, never stored. Chaining: child receipts (`deletion_receipts`)
+chain among themselves; an account receipt (`account_deletion_receipts`) chains
+onto the most-recent receipt of **either** kind. The two are deliberately not one
+rigid line, so retention can shred an aged account receipt without breaking the
+child chain's verifiability.
 
 ## Retention is NOT forever (COPPA 312.10)
 Evidence is kept for a **defined window**, then shredded — `expire_retained_evidence()`

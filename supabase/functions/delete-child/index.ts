@@ -112,7 +112,9 @@ Deno.serve(async (req) => {
   // re-exported by the reconcile drain). Only opaque ids/hash leave the system.
   try {
     const exp = await exportReceipt({ receipt_id: p.receipt_id, receipt_hash: p.receipt_hash, kind: 'child', status })
-    await service.rpc('mark_receipt_exported', { p_receipt_id: p.receipt_id, p_sink: exp.sink })
+    // mark exported ONLY on success — a failed export must not let retention shred
+    // the receipt (retention additionally requires a non-mock sink).
+    if (exp.ok) await service.rpc('mark_receipt_exported', { p_receipt_id: p.receipt_id, p_sink: exp.sink })
     await emailReceipt(parentUid, { receipt_id: p.receipt_id, receipt_hash: p.receipt_hash, kind: 'child', status })
   } catch { /* best-effort */ }
 

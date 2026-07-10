@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
   // off-DB anchor + parent email (fail-closed mock; best-effort)
   try {
     const exp = await exportReceipt({ receipt_id: p.account_receipt_id, receipt_hash: p.receipt_hash, kind: 'account', status })
-    await service.rpc('mark_receipt_exported', { p_receipt_id: p.account_receipt_id, p_sink: exp.sink })
+    if (exp.ok) await service.rpc('mark_receipt_exported', { p_receipt_id: p.account_receipt_id, p_sink: exp.sink })
     await emailReceipt(parentUid, { receipt_id: p.account_receipt_id, receipt_hash: p.receipt_hash, kind: 'account', status })
   } catch { /* best-effort */ }
 

@@ -96,7 +96,10 @@ begin
   if old.status = 'pending_auth_cleanup' and new.status = 'completed'
      and old.completed_at is null and new.completed_at is not null
      and new.id = old.id and new.parent_id = old.parent_id and new.receipt_hash = old.receipt_hash
-     and new.disposition = old.disposition and new.child_count = old.child_count then
+     and new.disposition = old.disposition and new.child_count = old.child_count
+     and new.parent_auth_user_id is not distinct from old.parent_auth_user_id
+     and new.deleting_actor = old.deleting_actor and new.child_receipt_ids = old.child_receipt_ids
+     and new.prev_receipt_hash is not distinct from old.prev_receipt_hash and new.db_purged_at = old.db_purged_at then
     return new;
   end if;
   raise exception 'account_deletion_receipts: only the auth-cleanup completion transition is permitted';
@@ -119,13 +122,27 @@ begin
     return jsonb_build_object('ok', false, 'error', 'bad_request'); end if;
   perform set_config('lock_timeout', '5000', true);
   perform set_config('statement_timeout', '60000', true);
+  -- serialize concurrent account deletions of the SAME parent so the idempotency
+  -- check below can't race two receipts (MEDIUM-3). Per-parent, tx-scoped.
+  perform pg_advisory_xact_lock(hashtext('acct-delete:' || p_parent_id::text));
 
-  -- idempotency: an existing account receipt => already purged; return it
+  -- idempotency: an existing account receipt => already purged; return it (with the
+  -- child auth ids recovered from the child receipts so the Edge can re-clean users)
   select * into v_receipt from public.account_deletion_receipts where parent_id = p_parent_id;
   if v_receipt.id is not null then
     return jsonb_build_object('ok', true, 'idempotent', true, 'account_receipt_id', v_receipt.id,
-      'parent_auth_user_id', v_receipt.parent_auth_user_id, 'child_auth_user_ids', v_child_auth,
-      'status', v_receipt.status); end if;
+      'parent_auth_user_id', v_receipt.parent_auth_user_id, 'status', v_receipt.status,
+      'child_auth_user_ids', coalesce((select array_agg(child_auth_user_id) from public.deletion_receipts
+        where id = any(v_receipt.child_receipt_ids) and child_auth_user_id is not null), '{}')); end if;
+
+  -- LEGAL HOLD (fail-LOUD, NO partial destruction): if ANY child is under an active
+  -- hold, refuse the whole account deletion BEFORE touching a single row (HIGH-1).
+  if exists (select 1 from public.legal_holds lh join public.children c on c.id = lh.child_id
+             where c.parent_id = p_parent_id and lh.released_at is null) then
+    insert into public.audit_log (actor_id, action, child_id, decision, detail)
+    values (p_deleting_actor, 'account.delete', null, 'deny', jsonb_build_object('reason', 'legal_hold', 'source', 'deletion'));
+    return jsonb_build_object('ok', false, 'error', 'legal_hold');
+  end if;
 
   perform set_config('app.purge', 'on', true);
 
@@ -133,8 +150,9 @@ begin
   for v_child in select id, auth_user_id from public.children where parent_id = p_parent_id order by created_at loop
     v_res := public.purge_child(v_child.id, p_parent_id, p_deleting_actor);
     if not (v_res->>'ok')::boolean then
-      -- a legal hold (or any child failure) blocks the whole account deletion — fail loud
-      return jsonb_build_object('ok', false, 'error', coalesce(v_res->>'error', 'child_purge_failed'), 'child_id', v_child.id);
+      -- any mid-loop failure (e.g. a hold placed AFTER the pre-scan) must ROLL BACK
+      -- the whole tx — never a committed partial purge (HIGH-1).
+      raise exception 'purge_account: child % failed: %', v_child.id, coalesce(v_res->>'error', 'child_purge_failed');
     end if;
     v_child_receipts := v_child_receipts || (v_res->>'receipt_id')::uuid;
     if v_child.auth_user_id is not null then v_child_auth := v_child_auth || v_child.auth_user_id; end if;
@@ -279,14 +297,16 @@ begin
     and not exists (select 1 from public.children ch where ch.consent_id = cl.id);   -- protect live children
   get diagnostics n = row_count; v := v || jsonb_build_object('consent_ledger', n);
 
+  -- a receipt is shreddable ONLY after a REAL off-DB export (sink <> 'mock') — a
+  -- failed/mock export must never let retention destroy the last replay source (MEDIUM-2).
   select retain_interval into iv from public.retention_policy where evidence_kind = 'deletion_receipts';
   delete from public.deletion_receipts dr where dr.created_at < p_now - iv
-    and exists (select 1 from public.receipt_exports re where re.receipt_id = dr.id);  -- exported-only
+    and exists (select 1 from public.receipt_exports re where re.receipt_id = dr.id and re.sink <> 'mock');
   get diagnostics n = row_count; v := v || jsonb_build_object('deletion_receipts', n);
 
   select retain_interval into iv from public.retention_policy where evidence_kind = 'account_deletion_receipts';
   delete from public.account_deletion_receipts ar where ar.created_at < p_now - iv
-    and exists (select 1 from public.receipt_exports re where re.receipt_id = ar.id);
+    and exists (select 1 from public.receipt_exports re where re.receipt_id = ar.id and re.sink <> 'mock');
   get diagnostics n = row_count; v := v || jsonb_build_object('account_deletion_receipts', n);
 
   select retain_interval into iv from public.retention_policy where evidence_kind = 'audit_log';

@@ -76,6 +76,37 @@ export async function loadDeletionReceipt(receiptId: string): Promise<DeletionRe
   return (data as DeletionReceipt) ?? null
 }
 
+export interface AccountDisposition { children_purged: number; parent_ops_deleted: number; parent_messages_tombstoned: number; retained: string[] }
+export interface AccountDeletionReceipt {
+  id: string; parent_id: string; parent_auth_user_id: string | null; deleting_actor: string
+  child_count: number; child_receipt_ids: string[]; disposition: AccountDisposition
+  prev_receipt_hash: string | null; receipt_hash: string; status: string
+  db_purged_at: string; completed_at: string | null; created_at: string
+}
+export interface DeleteAccountResult { ok: true; status: string; account_receipt_id: string; receipt_hash: string; children_purged: number; idempotent: boolean }
+
+// Whole-account deletion (Slice B3/B4). The Edge gate is identical to deleteChild
+// (parent-only + fresh step-up + rate-limit); it routes every child through the
+// SAME purge_child kernel and deletes the parent's own login too.
+export async function deleteAccount(): Promise<DeleteAccountResult | { error: string; reauth?: boolean }> {
+  const { data, error } = await supabase.functions.invoke('delete-account', { body: {} })
+  if (error) {
+    let body: { error?: string } | null = null
+    let status = 0
+    const ctx = (error as { context?: Response }).context
+    if (ctx) { status = ctx.status; try { body = await ctx.json() } catch { /* no body */ } }
+    if (status === 401 || body?.error === 'reauth_required') return { error: 'reauth_required', reauth: true }
+    return { error: body?.error ?? error.message ?? 'delete_failed' }
+  }
+  if (!data?.ok) return { error: data?.error ?? 'delete_failed' }
+  return data as DeleteAccountResult
+}
+
+export async function loadAccountReceipt(receiptId: string): Promise<AccountDeletionReceipt | null> {
+  const { data } = await supabase.from('account_deletion_receipts').select('*').eq('id', receiptId).maybeSingle()
+  return (data as AccountDeletionReceipt) ?? null
+}
+
 // Does this child's profile still exist for the caller? Used by the child hub to
 // detect a mid-session deletion. Fail-OPEN on a transient error (assume still
 // present) so a network blip never flips a live child to the "removed" screen —

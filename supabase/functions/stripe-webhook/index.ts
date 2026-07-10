@@ -40,15 +40,24 @@ Deno.serve(async (req) => {
   let event: { id?: string; type?: string; data?: { object?: { metadata?: Record<string, string>; payment_intent?: string; id?: string } } }
   try { event = JSON.parse(payload) } catch { return new Response('bad_json', { status: 400 }) }
   if (!event?.id) return new Response('bad_event', { status: 400 })
-  // ack any non-target verified event without side effects (no retry storm)
+  // Refund/dispute events must NEVER mutate consent/child state (MUST-FIX #6).
+  // Consent is anchored by the ORIGINAL card transaction; a later refund/dispute
+  // does not revoke it and never deletes anything — that is the parent's explicit
+  // deletion path only. Acked explicitly (verified event, zero side effects).
+  if (event.type?.startsWith('charge.refund') || event.type?.startsWith('charge.dispute')) {
+    return new Response('ignored_refund_dispute_no_mutation', { status: 200 })
+  }
+  // ack any other non-target verified event without side effects (no retry storm)
   if (event.type !== 'checkout.session.completed') return new Response('ignored', { status: 200 })
 
   const sess = event.data?.object ?? {}
   const md = sess.metadata ?? {}
-  const parentUid = md.parent_uid, nickname = md.nickname
-  const grade = md.grade ?? null, policyVersion = md.policy_version ?? 'v1'
+  const parentUid = md.parent_uid, pendingToken = md.pending_token
+  const policyVersion = md.policy_version ?? 'v1'
   const paymentRef = sess.payment_intent ?? sess.id ?? null
-  if (!parentUid || !nickname) return new Response('ok', { status: 200 }) // nothing actionable; ack
+  // The nickname/grade are NOT in Stripe metadata (A0) — grant_consent resolves
+  // them from the opaque pending token server-side.
+  if (!parentUid || !pendingToken) return new Response('ok', { status: 200 }) // nothing actionable; ack
 
   const service = createClient(URL_, SERVICE, { auth: { persistSession: false } })
   // idempotency pre-check → avoid a needless createUser on replay
@@ -61,7 +70,7 @@ Deno.serve(async (req) => {
   if (cErr || !created?.user) return new Response('create_failed', { status: 500 })
 
   const { data: g } = await service.rpc('grant_consent', {
-    p_parent_id: parentUid, p_auth_user_id: created.user.id, p_nickname: nickname, p_grade_band: grade,
+    p_parent_id: parentUid, p_auth_user_id: created.user.id, p_pending_token: pendingToken,
     p_method: 'stripe_card_transaction', p_payment_ref: paymentRef, p_policy_version: policyVersion, p_event_id: event.id,
   })
   if (!g?.ok) { await service.auth.admin.deleteUser(created.user.id); return new Response(JSON.stringify(g ?? { error: 'grant_failed' }), { status: 400, headers: { 'Content-Type': 'application/json' } }) }

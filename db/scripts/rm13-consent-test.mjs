@@ -43,7 +43,11 @@ async function post(eventObj, { secret = WH, t } = {}) {
 }
 const evt = (id, md) => ({ id, type: 'checkout.session.completed', data: { object: { id: 'cs_' + id, payment_intent: 'pi_' + id, metadata: md } } })
 const childCount = async () => (await q(`select count(*)::int n from public.children`)).rows[0].n
-const md = { parent_uid: uids.seth, nickname: 'Consented', grade: '2', policy_version: 'v1' }
+// A0: the nickname/grade are NOT in Stripe metadata — they're stashed in a
+// service-only pending_children row keyed by an opaque token that IS the metadata.
+const mkPending = async (parentUid, nickname, grade = null) =>
+  (await q(`insert into public.pending_children (parent_id, nickname, grade_band) values ($1,$2,$3) returning token`, [parentUid, nickname, grade])).rows[0].token
+const mdFor = (token, parentUid = uids.seth, policy = 'v1') => ({ parent_uid: parentUid, pending_token: token, policy_version: policy })
 
 // readiness
 let ready = false
@@ -55,32 +59,34 @@ try {
 
   // ---- 1. a VALID signed event → consent grant + child + entitlement + audit ----
   console.log('valid signed checkout.session.completed:')
-  const r1 = await post(evt('evt_rm13_1', md))
+  const tok1 = await mkPending(uids.seth, 'Consented', '2')
+  const r1 = await post(evt('evt_rm13_1', mdFor(tok1)))
   const kid = r1.body?.child_id ? (await q(`select id, parent_id, nickname, consent_id from public.children where id=$1`, [r1.body.child_id])).rows[0] : null
   const grant = kid ? (await q(`select method, detail->>'payment_ref' pr, detail->>'event_id' ev from public.consent_ledger where child_id=$1 and action='grant'`, [kid.id])).rows[0] : null
   const ent = (await q(`select status from public.entitlements where parent_id=$1`, [uids.seth])).rows[0]
   const aud = kid ? (await q(`select count(*)::int n from public.audit_log where action='consent.grant' and child_id=$1`, [kid.id])).rows[0].n : 0
-  r1.status === 200 && kid && kid.parent_id === uids.seth && kid.consent_id && grant?.method === 'stripe_card_transaction' && grant.pr === 'pi_evt_rm13_1' && ent?.status === 'active' && aud === 1
-    ? ok('immutable consent grant + consented child + entitlement + audit written; detail carries only the payment_ref (no card data)')
-    : bad(`valid: ${JSON.stringify({ r1, kid, grant, ent, aud })}`)
+  const pendGone = (await q(`select count(*)::int n from public.pending_children where token=$1`, [tok1])).rows[0].n
+  r1.status === 200 && kid && kid.parent_id === uids.seth && kid.nickname === 'Consented' && kid.consent_id && grant?.method === 'stripe_card_transaction' && grant.pr === 'pi_evt_rm13_1' && ent?.status === 'active' && aud === 1 && pendGone === 0
+    ? ok('nickname resolved from the opaque pending token (not Stripe); immutable grant + child + entitlement + audit; pending row consumed; detail carries only payment_ref')
+    : bad(`valid: ${JSON.stringify({ r1, kid, grant, ent, aud, pendGone })}`)
 
   // ---- 2. FORGED signature → 400, zero side effects ----
   console.log('forged signature:')
   const cBefore = await childCount()
-  const r2 = await post(evt('evt_rm13_forge', md), { secret: 'whsec_WRONG' })
+  const r2 = await post(evt('evt_rm13_forge', mdFor(await mkPending(uids.seth, 'Forge'))), { secret: 'whsec_WRONG' })
   const cAfter = await childCount()
   r2.status === 400 && cAfter === cBefore ? ok('forged signature → 400; no consent, no child') : bad(`forged: status=${r2.status} ${cBefore}->${cAfter}`)
 
   // ---- 3. REPLAY the same event id → idempotent, no duplicate ----
   console.log('replay (same event id):')
   const cPre = await childCount()
-  const r3 = await post(evt('evt_rm13_1', md))     // identical id to test 1
+  const r3 = await post(evt('evt_rm13_1', mdFor(tok1)))     // identical id to test 1
   const cPost = await childCount()
   r3.status === 200 && cPost === cPre ? ok('replayed event → idempotent (no second child/consent)') : bad(`replay: status=${r3.status} ${cPre}->${cPost}`)
 
   // ---- 4. STALE timestamp (valid HMAC, old t) → 400 ----
   console.log('stale timestamp:')
-  const r4 = await post(evt('evt_rm13_stale', md), { t: Math.floor(Date.now() / 1000) - 1000 })
+  const r4 = await post(evt('evt_rm13_stale', mdFor(await mkPending(uids.seth, 'Stale'))), { t: Math.floor(Date.now() / 1000) - 1000 })
   r4.status === 400 ? ok('stale/replayable timestamp → 400') : bad(`stale: status=${r4.status}`)
 
   // ---- 5. missing metadata (signed) → 200 ack, no child ----
@@ -93,7 +99,7 @@ try {
   // ---- 6. garbage parent_uid → invalid_parent (H1 defense-in-depth) + orphan cleanup ----
   console.log('garbage parent_uid + orphan cleanup:')
   const invBefore = (await q(`select count(*)::int n from auth.users where email like '%@child.invalid'`)).rows[0].n
-  const r6 = await post(evt('evt_rm13_badparent', { parent_uid: '00000000-0000-4000-8000-000000000000', nickname: 'Ghost', grade: '1', policy_version: 'v1' }))
+  const r6 = await post(evt('evt_rm13_badparent', { parent_uid: '00000000-0000-4000-8000-000000000000', pending_token: crypto.randomUUID(), policy_version: 'v1' }))
   const invAfter = (await q(`select count(*)::int n from auth.users where email like '%@child.invalid'`)).rows[0].n
   const ghost = (await q(`select count(*)::int n from public.children where nickname='Ghost'`)).rows[0].n
   r6.status === 400 && ghost === 0 && invAfter === invBefore

@@ -12,8 +12,11 @@ import { spawn } from 'node:child_process'
 import { createHmac } from 'node:crypto'
 import path from 'node:path'
 import fs from 'node:fs'
+import pgpkg from 'pg'
 import { fileURLToPath } from 'node:url'
 import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
+
+const { Client } = pgpkg
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const dist = path.join(root, 'dist')
@@ -51,6 +54,7 @@ for (let i = 0; i < 45 && !ready; i++) { await new Promise((r) => setTimeout(r, 
 ready ? ok('functions serving') : bad('functions not ready')
 const server = spawn('python3', ['-m', 'http.server', String(PORT), '--directory', dist], { stdio: 'ignore' })
 await new Promise((r) => setTimeout(r, 800))
+const db = new Client({ connectionString: cfg.dbUrl }); await db.connect()
 const browser = await chromium.launch({ args: ['--disable-web-security'] })
 
 try {
@@ -78,10 +82,16 @@ try {
   await page.getByTestId('payment-pending').waitFor({ timeout: 15000 })
   ok('add-a-child → consent checkout (mock) → returns to a payment-pending state')
 
-  // Stripe would now POST the signed webhook; fire it (server-stamped parent_uid = Seth)
+  // A0: the checkout stashed the nickname in a service-only pending_children row;
+  // Stripe metadata carries only the opaque token (never 'ConsentKid'). Assert the
+  // nickname is NOT in the DB-side metadata Stripe would see, then fetch the token.
+  const pend = (await db.query(`select token, nickname from public.pending_children where parent_id=$1 order by created_at desc limit 1`, [uids.seth])).rows[0]
+  pend?.nickname === 'ConsentKid' ? ok('nickname stashed our side in pending_children (opaque token → Stripe, never the nickname)') : bad(`pending row: ${JSON.stringify(pend)}`)
+
+  // Stripe would now POST the signed webhook with ONLY the opaque token + payer uid
   const evtId = 'evt_rm14_' + Date.now()
-  const wh = await postWebhook({ id: evtId, type: 'checkout.session.completed', data: { object: { id: 'cs_' + evtId, payment_intent: 'pi_' + evtId, metadata: { parent_uid: uids.seth, nickname: 'ConsentKid', grade: '2', policy_version: 'v1' } } } })
-  wh === 200 ? ok('signed webhook processed → consent + child created') : bad(`webhook status ${wh}`)
+  const wh = await postWebhook({ id: evtId, type: 'checkout.session.completed', data: { object: { id: 'cs_' + evtId, payment_intent: 'pi_' + evtId, metadata: { parent_uid: uids.seth, pending_token: pend?.token, policy_version: 'v1' } } } })
+  wh === 200 ? ok('signed webhook (no nickname in metadata) processed → consent + child created') : bad(`webhook status ${wh}`)
 
   await page.getByRole('button', { name: /Practice as ConsentKid/ }).waitFor({ timeout: 30000 })
   ok('the consented child activated in the hub (payment pending → live)')
@@ -95,7 +105,7 @@ try {
   bad2.length ? bad(`page errors: ${bad2.slice(0, 2).join(' | ')}`) : ok('no page errors')
   await ctx.close()
 } finally {
-  await browser.close(); server.kill(); fnServe.kill(); fs.rmSync(envFile, { force: true })
+  await browser.close(); server.kill(); fnServe.kill(); await db.end(); fs.rmSync(envFile, { force: true })
 }
 console.log(fails ? `\n=== RM-14 CONSENT E2E: ${fails} FAIL ===` : '\n=== RM-14 CONSENT E2E: ALL PASS (add-child → consent → active child → enter)')
 process.exit(fails ? 1 : 0)

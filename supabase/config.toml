@@ -435,3 +435,7 @@ verify_jwt = false
 # Parent-only, step-up re-auth required (auth_time freshness checked in-function).
 [functions.delete-child]
 verify_jwt = true
+
+# Whole-account deletion — same parent-only step-up gate; routes through purge_child.
+[functions.delete-account]
+verify_jwt = true

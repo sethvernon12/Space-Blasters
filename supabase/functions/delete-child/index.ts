@@ -8,6 +8,7 @@
 // stays 'pending_auth_cleanup' for the reconciliation drain. Uniform not-found for
 // not-yours/not-there. NO card/child PII is logged.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { emailReceipt, exportReceipt } from '../_shared/notify.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -106,6 +107,14 @@ Deno.serve(async (req) => {
     try { await service.auth.admin.deleteUser(childAuthUser) } catch { /* may already be gone */ }
     await service.rpc('complete_child_deletion', { p_child_auth_user_id: childAuthUser })
   }
+
+  // off-DB anchor + parent email (fail-closed mock; best-effort — a straggler is
+  // re-exported by the reconcile drain). Only opaque ids/hash leave the system.
+  try {
+    const exp = await exportReceipt({ receipt_id: p.receipt_id, receipt_hash: p.receipt_hash, kind: 'child', status })
+    await service.rpc('mark_receipt_exported', { p_receipt_id: p.receipt_id, p_sink: exp.sink })
+    await emailReceipt(parentUid, { receipt_id: p.receipt_id, receipt_hash: p.receipt_hash, kind: 'child', status })
+  } catch { /* best-effort */ }
 
   return json({
     ok: true, status, receipt_id: p.receipt_id, receipt_hash: p.receipt_hash,

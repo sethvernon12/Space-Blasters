@@ -22,7 +22,7 @@ export const DEV_ACCOUNTS = ALLOW_DEV_SIGNIN
   : []
 const PW = ALLOW_DEV_SIGNIN ? 'localtest123' : ''
 
-export interface Profile { role: Role; uid: string; displayName: string; children: ChildRow[]; canWrite: Record<string, boolean> }
+export interface Profile { role: Role; uid: string; displayName: string; children: ChildRow[]; canWrite: Record<string, boolean>; removed?: boolean }
 
 interface Ctx {
   session: Session | null
@@ -30,6 +30,7 @@ interface Ctx {
   profile: Profile | null
   signInAs: (email: string) => Promise<string | null>
   signOut: () => Promise<void>
+  reauth: () => Promise<string | null>
   enterChild: (childId: string) => Promise<string | null>
   returnToParent: () => Promise<void>
   reloadProfile: () => Promise<void>
@@ -43,6 +44,10 @@ async function loadProfile(uid: string, email: string): Promise<Profile> {
   const label = (email.split('@')[0] || 'You').replace(/^\w/, (c) => c.toUpperCase())
   const mine = children.find((c) => c.auth_user_id === uid)
   if (mine) return { role: 'child', uid, displayName: mine.nickname, children: [mine], canWrite }
+  // A child's opaque login is a @child.invalid identity. If such a token no longer
+  // matches any child row, the profile was deleted out from under it — render the
+  // gentle "removed" screen, never mis-classify it as a brand-new empty parent.
+  if (email.endsWith('@child.invalid')) return { role: 'child', uid, displayName: '', children: [], canWrite, removed: true }
   const asParent = children.filter((c) => c.parent_id === uid)
   if (asParent.length) return { role: 'parent', uid, displayName: label, children: asParent, canWrite }
   // tutor ONLY if actually granted; a brand-new Google adult (no children, no
@@ -88,6 +93,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setProfile(null)
   }, [])
 
+  // Step-up re-auth for a destructive action (child deletion). Refreshes the
+  // authentication time so the server's fresh-auth gate (amr within 5 min) passes.
+  // Real build: a Google re-auth redirect back to the current page. Dev build: a
+  // fresh password sign-in (a new amr timestamp) — seamless, no redirect.
+  const reauth = useCallback(async () => {
+    const email = session?.user.email ?? ''
+    if (ALLOW_DEV_SIGNIN && email) {
+      const { error } = await supabase.auth.signInWithPassword({ email, password: PW })
+      return error ? error.message : null
+    }
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.href } })
+    return error ? error.message : null // (redirects away on success)
+  }, [session])
+
   const reloadProfile = useCallback(async () => {
     if (!session) return
     setProfile(await loadProfile(session.user.id, session.user.email ?? ''))
@@ -110,8 +129,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     else { await supabase.auth.signOut(); setProfile(null) } // reloaded → re-auth
   }, [])
 
-  const value = useMemo(() => ({ session, loading, profile, signInAs, signOut, enterChild, returnToParent, reloadProfile }),
-    [session, loading, profile, signInAs, signOut, enterChild, returnToParent, reloadProfile])
+  const value = useMemo(() => ({ session, loading, profile, signInAs, signOut, reauth, enterChild, returnToParent, reloadProfile }),
+    [session, loading, profile, signInAs, signOut, reauth, enterChild, returnToParent, reloadProfile])
   return <SessionCtx.Provider value={value}>{children}</SessionCtx.Provider>
 }
 

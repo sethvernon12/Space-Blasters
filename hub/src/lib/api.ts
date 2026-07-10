@@ -37,6 +37,52 @@ export async function startConsentCheckout(nickname: string, gradeBand: string |
   return { url: data.url }
 }
 
+export interface Disposition {
+  deleted: Record<string, number>
+  tombstoned: Record<string, number>
+  retained: string[]
+  entitlement: string
+}
+export interface DeletionReceipt {
+  id: string; child_id: string; parent_id: string; child_auth_user_id: string | null
+  deleting_actor: string; revoke_consent_id: string | null; disposition: Disposition
+  prev_receipt_hash: string | null; receipt_hash: string; status: string
+  db_purged_at: string; completed_at: string | null; created_at: string
+}
+export interface DeleteResult { ok: true; status: string; receipt_id: string; receipt_hash: string; disposition: Disposition; idempotent: boolean }
+
+// Consent revocation -> hard deletion (Slice A/B). The Edge function is the gate:
+// parent-ownership + non-child + FRESH step-up re-auth + rate-limit BEFORE any
+// destruction, then the atomic purge + immutable receipt. A stale token comes back
+// as `reauth` so the UI can re-verify; legal_hold / rate_limited surface verbatim.
+export async function deleteChild(childId: string): Promise<DeleteResult | { error: string; reauth?: boolean }> {
+  const { data, error } = await supabase.functions.invoke('delete-child', { body: { childId } })
+  if (error) {
+    let body: { error?: string } | null = null
+    let status = 0
+    // supabase-js surfaces a non-2xx as FunctionsHttpError; the body is on .context
+    const ctx = (error as { context?: Response }).context
+    if (ctx) { status = ctx.status; try { body = await ctx.json() } catch { /* no body */ } }
+    if (status === 401 || body?.error === 'reauth_required') return { error: 'reauth_required', reauth: true }
+    return { error: body?.error ?? error.message ?? 'delete_failed' }
+  }
+  if (!data?.ok) return { error: data?.error ?? 'delete_failed' }
+  return data as DeleteResult
+}
+
+// Load a full receipt the parent owns (RLS parent-scoped) for display + off-DB export.
+export async function loadDeletionReceipt(receiptId: string): Promise<DeletionReceipt | null> {
+  const { data } = await supabase.from('deletion_receipts').select('*').eq('id', receiptId).maybeSingle()
+  return (data as DeletionReceipt) ?? null
+}
+
+// Does this child's profile still exist for the caller? Used by the child hub to
+// detect a mid-session deletion and show a gentle screen instead of an error.
+export async function childExists(childId: string): Promise<boolean> {
+  const { data } = await supabase.from('children').select('id').eq('id', childId).maybeSingle()
+  return !!data
+}
+
 // Mint a session for one of the parent's OWN children (the only door). Server-
 // side ownership + rate-limit + audit; the raw one-time link never returns here.
 export async function startChildSession(childId: string): Promise<{ access_token: string; refresh_token: string } | { error: string }> {

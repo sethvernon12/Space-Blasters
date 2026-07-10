@@ -3,6 +3,7 @@ import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
 import { ProgressRing } from '@/components/ProgressRing'
 import { MasteryBar } from '@/components/MasteryBar'
+import { RemoveChildDialog } from '@/components/RemoveChildDialog'
 import { approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, loadChildrenAndGrants, startConsentCheckout, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import { useSession, type Profile } from '@/lib/session'
 
@@ -22,6 +23,7 @@ export default function ParentHome({ profile }: { profile: Profile }) {
   const [nick, setNick] = useState('')
   const [grade, setGrade] = useState('')
   const [busy, setBusy] = useState(false)
+  const [removeTarget, setRemoveTarget] = useState<{ id: string; nickname: string } | null>(null)
   const childName = (id: string) => profile.children.find((c) => c.id === id)?.nickname ?? 'your child'
 
   const [pending, setPending] = useState(false)
@@ -171,7 +173,7 @@ export default function ParentHome({ profile }: { profile: Profile }) {
             ) : <p className="text-sm text-muted-foreground">No practice recorded yet.</p>}
 
             {/* child-picker: enter a CONSENTED child's hub via the mint; else awaiting setup (Phase 3.5) */}
-            <div className="border-t border-border pt-3">
+            <div className="flex flex-col gap-2 border-t border-border pt-3">
               {c.consent_id
                 ? <button type="button" data-testid="enter-child" onClick={() => enterHub(c.id)} className="min-h-9 w-full rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground">Practice as {c.nickname}</button>
                 : (
@@ -180,6 +182,11 @@ export default function ParentHome({ profile }: { profile: Profile }) {
                     <button type="button" disabled className="min-h-9 shrink-0 rounded-full border border-border px-4 text-sm font-semibold text-muted-foreground opacity-60">Finish setup</button>
                   </div>
                 )}
+              {/* deliberate, low-emphasis destructive action: revoke consent -> hard delete */}
+              <button type="button" data-testid="remove-child" onClick={() => setRemoveTarget({ id: c.id, nickname: c.nickname })}
+                className="flex items-center justify-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+                <Icon name="Trash2" size={13} /> Remove {c.nickname} &amp; delete all records
+              </button>
             </div>
           </Panel>
         )
@@ -203,6 +210,11 @@ export default function ParentHome({ profile }: { profile: Profile }) {
           </button>
         )}
       </Panel>
+
+      {removeTarget && (
+        <RemoveChildDialog childId={removeTarget.id} nickname={removeTarget.nickname}
+          onClose={() => setRemoveTarget(null)} onDeleted={() => void reloadProfile()} />
+      )}
     </div>
   )
 }

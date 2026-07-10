@@ -6,7 +6,8 @@ import {
   Settings, Plus, Minus, CircleDot, X, Divide, HelpCircle, Flame, BookOpen,
   Volume2, ArrowRight, ArrowLeft, Menu, Sparkles, ExternalLink, Check, LogOut,
   GraduationCap, Star, PencilLine, Gamepad2,
-  Users, ChevronRight, ChevronLeft, Heart, Repeat, Loader, type LucideProps,
+  Users, ChevronRight, ChevronLeft, Heart, Repeat, Loader,
+  Trash2, CheckCircle2, type LucideProps,
 } from 'lucide-react'
 
 const MAP = {
@@ -16,6 +17,7 @@ const MAP = {
   ArrowRight, ArrowLeft, Menu, Sparkles, ExternalLink, Check, LogOut,
   GraduationCap, Star, PencilLine, Gamepad2,
   Users, ChevronRight, ChevronLeft, Heart, Repeat, Loader,
+  Trash2, CheckCircle2,
 } as const
 
 export type IconName = keyof typeof MAP

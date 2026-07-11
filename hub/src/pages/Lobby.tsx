@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
-import { createHomeschoolFamily } from '@/lib/api'
+import { createHomeschoolFamily, redeemInvitation } from '@/lib/api'
 import { useSession, type Profile } from '@/lib/session'
 
 // The zero-privilege LOBBY: where every brand-new signed-in adult lands. It holds
@@ -17,6 +17,7 @@ export default function Lobby({ profile }: { profile: Profile }) {
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [academyErr, setAcademyErr] = useState<string | null>(null)
 
   // Self-serve homeschool: create the standalone family, then reload — the router
   // now sees a parent (empty roster) and renders the cockpit to add a first learner.
@@ -26,6 +27,15 @@ export default function Lobby({ profile }: { profile: Profile }) {
     if (!res.ok) { setBusy(false); setErr('Could not set up your homeschool — please try again.') ; return }
     await reloadProfile()
     // on success this component unmounts (role → parent); no need to clear busy
+  }
+
+  // Redeem an Academy acceptance key. Fail-closed server-side; on success the role
+  // changes (enrolled parent → cockpit; tutor/coach → their portal) and we reload.
+  async function redeemAcademyKey() {
+    setBusy(true); setAcademyErr(null)
+    const res = await redeemInvitation(key.trim())
+    if (!res.ok) { setBusy(false); setAcademyErr('That key isn’t valid or has already been used. Check with your Academy.'); return }
+    await reloadProfile()
   }
 
   return (
@@ -54,12 +64,14 @@ export default function Lobby({ profile }: { profile: Profile }) {
           </div>
           {path === 'academy' ? (
             <div className="flex flex-col gap-2">
-              <input value={key} onChange={(e) => setKey(e.target.value)} maxLength={64} placeholder="Acceptance key" aria-label="Academy acceptance key"
+              <input value={key} onChange={(e) => setKey(e.target.value)} maxLength={130} placeholder="Acceptance key" aria-label="Academy acceptance key"
                 data-testid="lobby-academy-key" className="min-h-10 rounded-xl border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-border-strong" />
-              {/* inert until AR-4 wires real Academy-controlled key redemption */}
-              <button type="button" data-testid="lobby-academy-continue" disabled aria-disabled="true"
-                className="min-h-10 rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground opacity-50">Continue</button>
-              <p className="text-xs text-muted-foreground" role="status">Academy sign-up is being set up — key redemption opens soon. Your Academy will confirm your invitation.</p>
+              <button type="button" data-testid="lobby-academy-continue" onClick={redeemAcademyKey} disabled={busy || key.trim().length < 8}
+                className="min-h-10 rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-50">
+                {busy ? 'Checking…' : 'Continue'}</button>
+              {academyErr
+                ? <p role="alert" data-testid="lobby-academy-error" className="text-xs font-medium text-[color:var(--danger)]">{academyErr}</p>
+                : <p className="text-xs text-muted-foreground">Your Academy issues this key — it can’t be self-created. Enter it exactly as given.</p>}
             </div>
           ) : (
             <button type="button" data-testid="lobby-academy-open" onClick={() => setPath('academy')}

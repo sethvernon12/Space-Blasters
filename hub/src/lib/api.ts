@@ -48,6 +48,15 @@ export async function applyStarterTemplate(childId: string): Promise<{ ok: boole
   return data
 }
 
+// Redeem an Academy acceptance key. Fail-closed server-side: invalid/expired/used
+// returns a generic error and confers nothing. On success the caller's role changes
+// (enrolled_parent → parent; tutor/coach → tutor) — the hub reloads the profile.
+export async function redeemInvitation(code: string): Promise<{ ok: boolean; kind?: string; error?: string }> {
+  const { data, error } = await supabase.rpc('redeem_invitation', { p_code: code })
+  if (error) return { ok: false, error: error.message }
+  return data
+}
+
 // Start the consent Checkout for a new child (Phase 3.5). Returns the Stripe
 // Checkout URL to redirect to; on payment, the signature-verified webhook creates
 // the child + immutable consent atomically (no child row exists before consent).

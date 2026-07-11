@@ -30,6 +30,9 @@ try {
       await page.goto(`http://127.0.0.1:${PORT}/`)
       await page.getByRole('button', { name: /^Seth/ }).click()
       await page.getByText('Your children', { exact: false }).first().waitFor({ timeout: 15000 })
+      // Delete my account now lives on the My account page (account menu → My account).
+      await page.getByTestId('account-menu').click()
+      await page.getByTestId('nav-my-account').click()
       await page.getByTestId('delete-account').scrollIntoViewIfNeeded()
       await page.getByTestId('delete-account').click()
       await page.getByTestId('delete-account-dialog').waitFor({ timeout: 8000 })

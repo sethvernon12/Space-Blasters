@@ -22,7 +22,16 @@ export const DEV_ACCOUNTS = ALLOW_DEV_SIGNIN
   : []
 const PW = ALLOW_DEV_SIGNIN ? 'localtest123' : ''
 
-export interface Profile { role: Role; uid: string; displayName: string; children: ChildRow[]; canWrite: Record<string, boolean>; removed?: boolean }
+export interface Profile { role: Role; uid: string; displayName: string; email: string; children: ChildRow[]; canWrite: Record<string, boolean>; removed?: boolean }
+
+// The adult's REAL name from the Google profile, read from the live session's
+// user_metadata (populated by Google at each OAuth sign-in) — never persisted by
+// us. Empty for dev password accounts (they have no full_name). DISPLAY-ONLY: this
+// label carries NO authorization weight (role derives from children/grants rows,
+// never from metadata), so a self-edited name is harmless — it never gates access.
+function googleFullName(meta: Record<string, unknown> | null | undefined): string {
+  return String(meta?.full_name || meta?.name || meta?.given_name || '')
+}
 
 interface Ctx {
   session: Session | null
@@ -37,23 +46,26 @@ interface Ctx {
 }
 const SessionCtx = createContext<Ctx | null>(null)
 
-async function loadProfile(uid: string, email: string): Promise<Profile> {
+async function loadProfile(uid: string, email: string, fullName: string): Promise<Profile> {
   const { children, grants } = await loadChildrenAndGrants()
   const canWrite: Record<string, boolean> = {}
   for (const g of grants) if (g.active) canWrite[g.child_id] = g.can_write
-  const label = (email.split('@')[0] || 'You').replace(/^\w/, (c) => c.toUpperCase())
+  // An adult sees their REAL Google name; fall back to the email local-part (dev
+  // password accounts have no full_name). Computed fresh from the session, never a
+  // stored app row.
+  const label = ((fullName.trim() || email.split('@')[0]) || 'You').replace(/^\w/, (c) => c.toUpperCase())
   const mine = children.find((c) => c.auth_user_id === uid)
-  if (mine) return { role: 'child', uid, displayName: mine.nickname, children: [mine], canWrite }
+  if (mine) return { role: 'child', uid, displayName: mine.nickname, email, children: [mine], canWrite }
   // A child's opaque login is a @child.invalid identity. If such a token no longer
   // matches any child row, the profile was deleted out from under it — render the
   // gentle "removed" screen, never mis-classify it as a brand-new empty parent.
-  if (email.endsWith('@child.invalid')) return { role: 'child', uid, displayName: '', children: [], canWrite, removed: true }
+  if (email.endsWith('@child.invalid')) return { role: 'child', uid, displayName: '', email, children: [], canWrite, removed: true }
   const asParent = children.filter((c) => c.parent_id === uid)
-  if (asParent.length) return { role: 'parent', uid, displayName: label, children: asParent, canWrite }
+  if (asParent.length) return { role: 'parent', uid, displayName: label, email, children: asParent, canWrite }
   // tutor ONLY if actually granted; a brand-new Google adult (no children, no
   // grants) is a parent with an empty roster — never mis-classified as a tutor.
-  if (grants.some((g) => g.active)) return { role: 'tutor', uid, displayName: label, children, canWrite }
-  return { role: 'parent', uid, displayName: label, children: [], canWrite }
+  if (grants.some((g) => g.active)) return { role: 'tutor', uid, displayName: label, email, children, canWrite }
+  return { role: 'parent', uid, displayName: label, email, children: [], canWrite }
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -74,7 +86,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     let alive = true
     if (!session) { setProfile(null); return }
     setLoading(true)
-    loadProfile(session.user.id, session.user.email ?? '').then((p) => {
+    loadProfile(session.user.id, session.user.email ?? '', googleFullName(session.user.user_metadata)).then((p) => {
       if (alive) { setProfile(p); setLoading(false) }
     })
     return () => { alive = false }
@@ -111,7 +123,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const reloadProfile = useCallback(async () => {
     if (!session) return
-    setProfile(await loadProfile(session.user.id, session.user.email ?? ''))
+    setProfile(await loadProfile(session.user.id, session.user.email ?? '', googleFullName(session.user.user_metadata)))
   }, [session])
 
   // Enter one of the parent's OWN children via the mint; stash the parent session

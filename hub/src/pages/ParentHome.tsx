@@ -4,7 +4,6 @@ import { Icon } from '@/components/Icon'
 import { ProgressRing } from '@/components/ProgressRing'
 import { MasteryBar } from '@/components/MasteryBar'
 import { RemoveChildDialog } from '@/components/RemoveChildDialog'
-import { DeleteAccountDialog } from '@/components/DeleteAccountDialog'
 import { approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, loadChildrenAndGrants, startConsentCheckout, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import { useSession, type Profile } from '@/lib/session'
 
@@ -19,13 +18,12 @@ export default function ParentHome({ profile }: { profile: Profile }) {
   const [grades, setGrades] = useState<PendingGrade[]>([])
   const [assigns, setAssigns] = useState<PendingAssignment[]>([])
   const [flash, setFlash] = useState<string | null>(null)
-  const { enterChild, reloadProfile, signOut } = useSession()
+  const { enterChild, reloadProfile } = useSession()
   const [addOpen, setAddOpen] = useState(false)
   const [nick, setNick] = useState('')
   const [grade, setGrade] = useState('')
   const [busy, setBusy] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<{ id: string; nickname: string } | null>(null)
-  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false)
   const childName = (id: string) => profile.children.find((c) => c.id === id)?.nickname ?? 'your child'
 
   const [pending, setPending] = useState(false)
@@ -213,25 +211,12 @@ export default function ParentHome({ profile }: { profile: Profile }) {
         )}
       </Panel>
 
-      {/* danger zone — parent-only (ParentHome renders for role parent) */}
-      <div className="mt-2 rounded-2xl border border-dashed p-4" style={{ borderColor: 'var(--danger, #c0392b)' }}>
-        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: 'var(--danger, #c0392b)' }}>Danger zone</p>
-        <div className="mt-1 flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">Delete your account and every child’s records permanently.</p>
-          <button type="button" data-testid="delete-account" onClick={() => setDeleteAccountOpen(true)}
-            className="min-h-9 shrink-0 rounded-full border px-4 text-sm font-semibold" style={{ borderColor: 'var(--danger, #c0392b)', color: 'var(--danger, #c0392b)' }}>
-            Delete my account
-          </button>
-        </div>
-      </div>
+      {/* "Delete my account" now lives on the My account page (account menu → My
+          account), not in the per-child cockpit. Per-child removal stays here. */}
 
       {removeTarget && (
         <RemoveChildDialog childId={removeTarget.id} nickname={removeTarget.nickname}
           onClose={() => setRemoveTarget(null)} onDeleted={() => void reloadProfile()} />
-      )}
-      {deleteAccountOpen && (
-        <DeleteAccountDialog childCount={profile.children.length}
-          onClose={() => setDeleteAccountOpen(false)} onDone={() => void signOut()} />
       )}
     </div>
   )

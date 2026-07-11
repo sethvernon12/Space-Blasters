@@ -3,7 +3,7 @@ import { useSession } from '@/lib/session'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Icon } from '@/components/Icon'
 
-const ROLE_LABEL: Record<string, string> = { parent: 'Parent', child: 'Learner', tutor: 'Tutor' }
+const ROLE_LABEL: Record<string, string> = { parent: 'Parent', child: 'Learner', tutor: 'Tutor', lobby: 'Getting started' }
 
 // The signed-in account menu in the shell header: real name + role, opening a
 // small menu with "My account" and a plainly-labeled "Sign out". A child session

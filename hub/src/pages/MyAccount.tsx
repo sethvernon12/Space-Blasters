@@ -5,7 +5,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { DeleteAccountDialog } from '@/components/DeleteAccountDialog'
 import { useSession, type Profile } from '@/lib/session'
 
-const ROLE_LABEL: Record<string, string> = { parent: 'Parent', child: 'Learner', tutor: 'Tutor' }
+const ROLE_LABEL: Record<string, string> = { parent: 'Parent', child: 'Learner', tutor: 'Tutor', lobby: 'Getting started' }
 
 // The account home: who you're signed in as, a plainly-labeled sign-out, and —
 // for a parent (the account owner) — the relocated "Delete my account". A child

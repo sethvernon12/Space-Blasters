@@ -3,7 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import { loadChildrenAndGrants, startChildSession, type ChildRow } from './api'
 
-export type Role = 'parent' | 'child' | 'tutor'
+export type Role = 'parent' | 'child' | 'tutor' | 'lobby'
 
 // The dev "Sign in as…" switcher is a LOCAL/synthetic-staging stand-in for real
 // Google OAuth (Phase 3). It is gated behind an EXPLICIT build flag so it — and
@@ -18,6 +18,7 @@ export const DEV_ACCOUNTS = ALLOW_DEV_SIGNIN
       { label: 'Seth', sub: 'Parent — Brielle & Theo', email: 'seth@local.test', icon: 'Users' },
       { label: 'Brielle', sub: 'Learner', email: 'brielle@local.test', icon: 'Rocket' },
       { label: 'Grandma Rose', sub: 'Tutor for Brielle', email: 'rose@local.test', icon: 'GraduationCap' },
+      { label: 'Alex', sub: 'Brand-new — no setup yet', email: 'newcomer@local.test', icon: 'Sparkles' },
     ]
   : []
 const PW = ALLOW_DEV_SIGNIN ? 'localtest123' : ''
@@ -62,10 +63,12 @@ async function loadProfile(uid: string, email: string, fullName: string): Promis
   if (email.endsWith('@child.invalid')) return { role: 'child', uid, displayName: '', email, children: [], canWrite, removed: true }
   const asParent = children.filter((c) => c.parent_id === uid)
   if (asParent.length) return { role: 'parent', uid, displayName: label, email, children: asParent, canWrite }
-  // tutor ONLY if actually granted; a brand-new Google adult (no children, no
-  // grants) is a parent with an empty roster — never mis-classified as a tutor.
+  // tutor ONLY if actually granted (Academy-authorized); never self-declared.
   if (grants.some((g) => g.active)) return { role: 'tutor', uid, displayName: label, email, children, canWrite }
-  return { role: 'parent', uid, displayName: label, email, children: [], canWrite }
+  // A brand-new Google adult with NO children and NO active grant is NOT yet set up:
+  // they land in the zero-privilege LOBBY, never auto-promoted to a parent-with-access.
+  // Fail-closed default — being "trusted with children" is an explicit later step.
+  return { role: 'lobby', uid, displayName: label, email, children: [], canWrite }
 }
 
 export function SessionProvider({ children }: { children: ReactNode }) {

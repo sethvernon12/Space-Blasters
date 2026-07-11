@@ -6,6 +6,7 @@ import { RoleShell } from '@/components/RoleShell'
 import ParentHome from '@/pages/ParentHome'
 import ChildHome from '@/pages/ChildHome'
 import TutorHome from '@/pages/TutorHome'
+import Lobby from '@/pages/Lobby'
 import MyAccount from '@/pages/MyAccount'
 
 export default function Root() {
@@ -28,7 +29,8 @@ export default function Root() {
         ? <MyAccount profile={profile} onBack={() => setView('home')} />
         : profile.role === 'parent' ? <ParentHome profile={profile} />
           : profile.role === 'child' ? <ChildHome profile={profile} />
-            : <TutorHome profile={profile} />}
+            : profile.role === 'tutor' ? <TutorHome profile={profile} />
+              : <Lobby profile={profile} />}
     </RoleShell>
   )
 }

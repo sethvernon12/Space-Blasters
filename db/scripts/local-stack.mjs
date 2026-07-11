@@ -59,6 +59,7 @@ export const FILES_M3 = [
   'supabase/migrations/0019_retention_lifecycle.sql',
   'supabase/migrations/0020_purge_workers.sql',
   'supabase/migrations/0021_family_standing.sql',
+  'supabase/migrations/0022_homeschool_arena.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

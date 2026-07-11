@@ -48,7 +48,7 @@ interface Ctx {
 const SessionCtx = createContext<Ctx | null>(null)
 
 async function loadProfile(uid: string, email: string, fullName: string): Promise<Profile> {
-  const { children, grants } = await loadChildrenAndGrants()
+  const { children, grants, family } = await loadChildrenAndGrants()
   const canWrite: Record<string, boolean> = {}
   for (const g of grants) if (g.active) canWrite[g.child_id] = g.can_write
   // An adult sees their REAL Google name; fall back to the email local-part (dev
@@ -63,6 +63,9 @@ async function loadProfile(uid: string, email: string, fullName: string): Promis
   if (email.endsWith('@child.invalid')) return { role: 'child', uid, displayName: '', email, children: [], canWrite, removed: true }
   const asParent = children.filter((c) => c.parent_id === uid)
   if (asParent.length) return { role: 'parent', uid, displayName: label, email, children: asParent, canWrite }
+  // a parent who has SET UP a family (homeschool self-serve) but not yet added a
+  // child is still a parent — an empty roster, ready to add their first learner.
+  if (family) return { role: 'parent', uid, displayName: label, email, children: [], canWrite }
   // tutor ONLY if actually granted (Academy-authorized); never self-declared.
   if (grants.some((g) => g.active)) return { role: 'tutor', uid, displayName: label, email, children, canWrite }
   // A brand-new Google adult with NO children and NO active grant is NOT yet set up:

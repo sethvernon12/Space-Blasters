@@ -4,7 +4,7 @@ import { Icon } from '@/components/Icon'
 import { ProgressRing } from '@/components/ProgressRing'
 import { MasteryBar } from '@/components/MasteryBar'
 import { RemoveChildDialog } from '@/components/RemoveChildDialog'
-import { approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, loadChildrenAndGrants, startConsentCheckout, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
+import { applyStarterTemplate, approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, loadChildrenAndGrants, startConsentCheckout, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import { useSession, type Profile } from '@/lib/session'
 
 const FEATURE_AI = true // flag-gated; routes through the kernel (child-summary + approvals)
@@ -55,7 +55,12 @@ export default function ParentHome({ profile }: { profile: Profile }) {
       setPending(true)
       for (let i = 0; i < 20 && !cancelled; i++) {
         const { children } = await loadChildrenAndGrants() // check FIRST — clears at once if already live
-        if (children.length > baseline) { await reloadProfile(); break }
+        if (children.length > baseline) {
+          // populate the new learner's hub with grade-level starter to-dos
+          // (idempotent server-side: only a child with no assignments gets a plan)
+          await Promise.all(children.map((c) => applyStarterTemplate(c.id)))
+          await reloadProfile(); break
+        }
         await new Promise((r) => setTimeout(r, 2000))
       }
       if (!cancelled) { setPending(false); window.history.replaceState({}, '', window.location.pathname) }

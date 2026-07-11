@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
-import type { Profile } from '@/lib/session'
+import { createHomeschoolFamily } from '@/lib/api'
+import { useSession, type Profile } from '@/lib/session'
 
 // The zero-privilege LOBBY: where every brand-new signed-in adult lands. It holds
 // NO access to any child — being trusted with children is a separate, later step.
@@ -11,8 +12,21 @@ import type { Profile } from '@/lib/session'
 // This slice (AR-2) is the lobby + the first-run router only; the paths are honest
 // previews that confer nothing.
 export default function Lobby({ profile }: { profile: Profile }) {
+  const { reloadProfile } = useSession()
   const [path, setPath] = useState<null | 'academy' | 'homeschool'>(null)
   const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  // Self-serve homeschool: create the standalone family, then reload — the router
+  // now sees a parent (empty roster) and renders the cockpit to add a first learner.
+  async function setupHomeschool() {
+    setBusy(true); setErr(null)
+    const res = await createHomeschoolFamily()
+    if (!res.ok) { setBusy(false); setErr('Could not set up your homeschool — please try again.') ; return }
+    await reloadProfile()
+    // on success this component unmounts (role → parent); no need to clear busy
+  }
 
   return (
     <div className="flex flex-col gap-5" data-testid="lobby">
@@ -62,16 +76,13 @@ export default function Lobby({ profile }: { profile: Profile }) {
             <h2 className="text-base font-bold text-foreground">Homeschooling on your own</h2>
             <p className="mt-1 text-sm text-muted-foreground">Set up your own family space and add your first learner — you stay fully in control.</p>
           </div>
-          {path === 'homeschool' ? (
-            <p className="mt-auto rounded-xl border border-border p-3 text-sm text-muted-foreground" role="status" data-testid="lobby-homeschool-note">
-              Homeschool setup opens next — we’ll walk you through adding your first learner and consent. Hang tight!
-            </p>
-          ) : (
-            <button type="button" data-testid="lobby-homeschool-open" onClick={() => setPath('homeschool')}
-              className="mt-auto flex min-h-10 items-center justify-center gap-1.5 rounded-full border border-border-strong bg-card text-sm font-semibold text-foreground hover:bg-surface-muted">
-              Set up my homeschool <Icon name="ArrowRight" size={15} />
+          <div className="mt-auto flex flex-col gap-2">
+            <button type="button" data-testid="lobby-homeschool-start" onClick={setupHomeschool} disabled={busy}
+              className="flex min-h-10 items-center justify-center gap-1.5 rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-60">
+              {busy ? 'Setting up…' : <>Set up my homeschool <Icon name="ArrowRight" size={15} /></>}
             </button>
-          )}
+            {err && <p role="alert" className="text-xs font-medium text-[color:var(--danger)]">{err}</p>}
+          </div>
         </Panel>
       </div>
 

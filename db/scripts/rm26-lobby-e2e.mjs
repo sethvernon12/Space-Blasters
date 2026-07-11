@@ -60,8 +60,9 @@ try {
   await shot(page, 'desktop-lobby')
   await page.getByTestId('lobby-academy-open').click()
   await page.getByTestId('lobby-academy-key').waitFor({ timeout: 4000 })
-  await page.getByTestId('lobby-homeschool-open').click()
-  await page.getByTestId('lobby-homeschool-note').waitFor({ timeout: 4000 })
+  // (the homeschool "Set up my homeschool" button now performs REAL self-serve
+  //  onboarding — exercised by rm27; clicking it here would leave the lobby)
+  await page.getByTestId('lobby-homeschool-start').waitFor({ timeout: 4000 })
   await shot(page, 'desktop-lobby-paths')
   await ctx.close()
 

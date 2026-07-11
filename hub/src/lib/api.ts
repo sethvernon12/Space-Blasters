@@ -16,12 +16,36 @@ interface MasteryRow {
   skills: { display_name: string; subject: string; position: number } | null
 }
 
-export async function loadChildrenAndGrants(): Promise<{ children: ChildRow[]; grants: Grant[] }> {
-  const [kids, grants] = await Promise.all([
+export interface Family { group_id: string; arena: string | null }
+
+export async function loadChildrenAndGrants(): Promise<{ children: ChildRow[]; grants: Grant[]; family: Family | null }> {
+  const [kids, grants, fam] = await Promise.all([
     supabase.from('children').select('id,nickname,grade_band,parent_id,auth_user_id,consent_id'),
     supabase.from('tutor_grants').select('child_id,can_write,active'),
+    supabase.rpc('my_family'), // the caller's arena-tagged family group, if any
   ])
-  return { children: (kids.data ?? []) as ChildRow[], grants: (grants.data ?? []) as Grant[] }
+  const f = (fam.data as Family[] | null)?.[0]
+  return {
+    children: (kids.data ?? []) as ChildRow[],
+    grants: (grants.data ?? []) as Grant[],
+    family: f ? { group_id: f.group_id, arena: f.arena } : null,
+  }
+}
+
+// Self-serve homeschool onboarding: create the standalone (no Academy) family group
+// so the router recognizes the caller as a parent. Idempotent server-side.
+export async function createHomeschoolFamily(): Promise<{ ok: boolean; group_id?: string; error?: string }> {
+  const { data, error } = await supabase.rpc('create_homeschool_family')
+  if (error) return { ok: false, error: error.message }
+  return data
+}
+
+// Populate a newly-added child's hub with grade-level starter to-dos (assignments,
+// never fabricated mastery). Owner-only + idempotent server-side.
+export async function applyStarterTemplate(childId: string): Promise<{ ok: boolean; created?: number }> {
+  const { data, error } = await supabase.rpc('apply_starter_template', { p_child_id: childId })
+  if (error) return { ok: false }
+  return data
 }
 
 // Start the consent Checkout for a new child (Phase 3.5). Returns the Stripe

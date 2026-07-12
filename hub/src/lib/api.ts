@@ -90,6 +90,13 @@ export async function getUploadUrl(uploadId: string): Promise<string | null> {
   return data.url as string
 }
 
+// Move an inbox item through its lifecycle (inbox → in_progress → graded → filed).
+// Owner/granted-tutor only; server-enforced (set_upload_status re-checks can_write_child).
+export async function setUploadStatus(uploadId: string, status: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('set_upload_status', { p_upload_id: uploadId, p_status: status })
+  return !error && !!data?.ok
+}
+
 // Start the consent Checkout for a new child (Phase 3.5). Returns the Stripe
 // Checkout URL to redirect to; on payment, the signature-verified webhook creates
 // the child + immutable consent atomically (no child row exists before consent).

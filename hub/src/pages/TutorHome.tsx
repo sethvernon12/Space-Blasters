@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
 import { MasteryBar } from '@/components/MasteryBar'
+import { ChildInbox } from '@/components/ChildInbox'
 import { approveAssignment, approveGrade, createAssignment, createGrade, generateAssignment, getMastery, getPendingAssignments, getPendingGrades, listAssignments, type Assignment, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import type { Profile } from '@/lib/session'
 
@@ -150,6 +151,9 @@ export default function TutorHome({ profile }: { profile: Profile }) {
                 {(assignsByChild[c.id]?.length ?? 0) > 0 && <p className="text-xs text-muted-foreground">{assignsByChild[c.id].length} assignment(s) sent</p>}
               </div>
             )}
+
+            {/* homework inbox — upload + status lifecycle for a can-teach tutor; read-only for view-only */}
+            <ChildInbox childId={c.id} childName={c.nickname} canWrite={canWrite} />
           </Panel>
         )
       })}

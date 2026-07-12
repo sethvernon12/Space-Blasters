@@ -4,8 +4,8 @@
 // carries NO EXIF/GPS metadata, so this strips it by construction, and we downscale to
 // keep payloads small. The server (upload-work Edge fn) re-strips + re-validates
 // fail-closed — this is the first of the two layers.
-const MAX_DIM = 2000
-const QUALITY = 0.85
+const MAX_DIM = 2600                  // match the server's OUTPUT_MAX_DIM (preserve faint pencil)
+const QUALITY = 0.9
 const MAX_BYTES = 10 * 1024 * 1024   // 10 MB — the bucket + schema hard cap
 
 export interface PreparedImage { blob: Blob; contentType: 'image/jpeg'; bytes: number }

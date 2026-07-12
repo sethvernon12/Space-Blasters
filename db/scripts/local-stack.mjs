@@ -63,6 +63,7 @@ export const FILES_M3 = [
   'supabase/migrations/0023_academy_invitations.sql',
   'supabase/migrations/0024_uploads.sql',
   'supabase/migrations/0025_upload_verify.sql',
+  'supabase/migrations/0026_uploads_jpeg_only.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

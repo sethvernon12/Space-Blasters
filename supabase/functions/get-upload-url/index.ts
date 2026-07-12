@@ -34,7 +34,10 @@ Deno.serve(async (req) => {
   if (!row?.storage_path) return json({ error: 'not_found' }, 404)
 
   const service = createClient(URL_, SERVICE, { auth: { persistSession: false } })
-  const { data: signed, error } = await service.storage.from('uploads').createSignedUrl(row.storage_path, 60)
+  // 60s TTL; `download` forces Content-Disposition: attachment. Stored objects are ALWAYS
+  // a re-encoded image/jpeg (never active content — SVG rejected at ingest, everything
+  // re-encoded), served from the separate storage origin — layered against content-sniffing.
+  const { data: signed, error } = await service.storage.from('uploads').createSignedUrl(row.storage_path, 60, { download: true })
   if (error || !signed?.signedUrl) return json({ error: 'sign_failed' }, 500)
   return json({ ok: true, url: signed.signedUrl })
 })

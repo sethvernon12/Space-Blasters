@@ -62,6 +62,7 @@ export const FILES_M3 = [
   'supabase/migrations/0022_homeschool_arena.sql',
   'supabase/migrations/0023_academy_invitations.sql',
   'supabase/migrations/0024_uploads.sql',
+  'supabase/migrations/0025_upload_verify.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

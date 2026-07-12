@@ -4,6 +4,7 @@ import { Icon } from '@/components/Icon'
 import { ProgressRing } from '@/components/ProgressRing'
 import { MasteryBar } from '@/components/MasteryBar'
 import { RemoveChildDialog } from '@/components/RemoveChildDialog'
+import { ChildInbox } from '@/components/ChildInbox'
 import { applyStarterTemplate, approveAssignment, approveGrade, getChildSummary, getMastery, getPendingAssignments, getPendingGrades, loadChildrenAndGrants, startConsentCheckout, type PendingAssignment, type PendingGrade, type SkillMastery } from '@/lib/api'
 import { useSession, type Profile } from '@/lib/session'
 
@@ -193,6 +194,9 @@ export default function ParentHome({ profile }: { profile: Profile }) {
                 <Icon name="Trash2" size={13} /> Remove {c.nickname} &amp; delete all records
               </button>
             </div>
+
+            {/* homework-photo inbox — consented children only (uploads need VPC) */}
+            {c.consent_id && <ChildInbox childId={c.id} childName={c.nickname} />}
           </Panel>
         )
       })}

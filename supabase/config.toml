@@ -444,3 +444,11 @@ verify_jwt = true
 # auth (fail-closed), same doctrine as stripe-webhook.
 [functions.maintenance-worker]
 verify_jwt = false
+
+# Phase 4 · U2 — the trusted upload authority (server-side EXIF re-strip + store +
+# attest) and the short-lived signed download URL. Both require a real user JWT.
+[functions.upload-work]
+verify_jwt = true
+
+[functions.get-upload-url]
+verify_jwt = true

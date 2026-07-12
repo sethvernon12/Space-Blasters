@@ -7,7 +7,7 @@ import {
   Volume2, ArrowRight, ArrowLeft, Menu, Sparkles, ExternalLink, Check, LogOut,
   GraduationCap, Star, PencilLine, Gamepad2,
   Users, ChevronRight, ChevronLeft, ChevronDown, Heart, Repeat, Loader,
-  Trash2, CheckCircle2, UserRound, type LucideProps,
+  Trash2, CheckCircle2, UserRound, Camera, Image as ImageIcon, type LucideProps,
 } from 'lucide-react'
 
 const MAP = {
@@ -17,7 +17,7 @@ const MAP = {
   ArrowRight, ArrowLeft, Menu, Sparkles, ExternalLink, Check, LogOut,
   GraduationCap, Star, PencilLine, Gamepad2,
   Users, ChevronRight, ChevronLeft, ChevronDown, Heart, Repeat, Loader,
-  Trash2, CheckCircle2, UserRound,
+  Trash2, CheckCircle2, UserRound, Camera, Image: ImageIcon,
 } as const
 
 export type IconName = keyof typeof MAP

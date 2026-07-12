@@ -57,6 +57,39 @@ export async function redeemInvitation(code: string): Promise<{ ok: boolean; kin
   return data
 }
 
+// ---- Phase 4 · U2: uploads (homework photos into a child's inbox) ----
+export interface Upload { id: string; status: string; note: string | null; content_type: string; created_at: string }
+
+const UPLOAD_ERROR: Record<string, string> = {
+  rate_limited: 'You’ve uploaded a lot just now — please wait a bit and try again.',
+  not_authorized: 'You don’t have permission to add work for this child.',
+  no_consent: 'Set up consent for this child before uploading their work.',
+  bad_type: 'That doesn’t look like a photo we can accept.',
+  bad_size: 'That image is too large.',
+  bad_image: 'We couldn’t read that image — please try another photo.',
+}
+
+// Send a client-prepared (HEIC-decoded, EXIF-stripped, downscaled) JPEG to the trusted
+// upload Edge fn, which re-strips + re-validates server-side and files it in the inbox.
+export async function uploadWork(childId: string, imageBase64: string, note: string | null): Promise<{ ok: boolean; upload_id?: string; error?: string }> {
+  const { data, error } = await supabase.functions.invoke('upload-work', { body: { childId, imageBase64, note } })
+  if (error) return { ok: false, error: 'Upload failed — please try again.' }
+  if (!data?.ok) return { ok: false, error: UPLOAD_ERROR[data?.error] ?? 'Upload failed — please try again.' }
+  return data
+}
+
+export async function listUploads(childId: string): Promise<Upload[]> {
+  const { data } = await supabase.from('uploads').select('id,status,note,content_type,created_at').eq('child_id', childId).order('created_at', { ascending: false })
+  return (data ?? []) as Upload[]
+}
+
+// Short-lived signed URL to view one upload (private bucket; server-authorized by RLS).
+export async function getUploadUrl(uploadId: string): Promise<string | null> {
+  const { data, error } = await supabase.functions.invoke('get-upload-url', { body: { uploadId } })
+  if (error || !data?.ok) return null
+  return data.url as string
+}
+
 // Start the consent Checkout for a new child (Phase 3.5). Returns the Stripe
 // Checkout URL to redirect to; on payment, the signature-verified webhook creates
 // the child + immutable consent atomically (no child row exists before consent).

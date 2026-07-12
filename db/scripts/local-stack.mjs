@@ -61,6 +61,7 @@ export const FILES_M3 = [
   'supabase/migrations/0021_family_standing.sql',
   'supabase/migrations/0022_homeschool_arena.sql',
   'supabase/migrations/0023_academy_invitations.sql',
+  'supabase/migrations/0024_uploads.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

@@ -28,9 +28,12 @@ try {
   // ---- parent records an upload for their child ----
   const { data: r1 } = await rec(seth.client, BRIELLE, P(BRIELLE), 'image/jpeg', 1048576, 'page 1')
   r1?.ok && r1.upload_id ? ok('parent records an upload for their child') : bad(`record: ${JSON.stringify(r1)}`)
-  const row = (await q(`select status,exif_stripped,uploader_role,uploaded_by,note, (expires_at > now()+interval '29 days' and expires_at < now()+interval '31 days') as exp_30d from public.uploads where id=$1`, [r1.upload_id]))[0]
-  row.status === 'inbox' && row.exif_stripped === false && row.uploader_role === 'parent' && row.uploaded_by === seth.uid && row.exp_30d && row.note === 'page 1'
-    ? ok('row: status=inbox, exif_stripped=false (U2 verifies), role DERIVED=parent, expires ~30d, note stored') : bad(`row: ${JSON.stringify(row)}`)
+  // U4 (value-capture §1): the while-enrolled 30-day timer is GONE — work is retained
+  // while enrolled; deletion is departure/request/schedule-triggered (LEG-12).
+  const noExpiry = (await q(`select 1 from information_schema.columns where table_schema='public' and table_name='uploads' and column_name='expires_at'`)).length === 0
+  const row = (await q(`select status,exif_stripped,uploader_role,uploaded_by,note from public.uploads where id=$1`, [r1.upload_id]))[0]
+  row.status === 'inbox' && row.exif_stripped === false && row.uploader_role === 'parent' && row.uploaded_by === seth.uid && noExpiry && row.note === 'page 1'
+    ? ok('row: status=inbox, exif_stripped=false (U2 verifies), role DERIVED=parent, retained (no expiry timer — U4), note stored') : bad(`row: ${JSON.stringify({ ...row, noExpiry })}`)
   // parent reads it back through RLS
   const { data: seen } = await seth.client.from('uploads').select('id').eq('child_id', BRIELLE)
   ;(seen ?? []).some((u) => u.id === r1.upload_id) ? ok('parent reads their child’s inbox (RLS)') : bad('parent cannot read own upload')
@@ -45,7 +48,7 @@ try {
 
   // ---- tutor grants: can-write tutor may upload; view-only may not ----
   const roseWrite = (await q(`select can_write from public.tutor_grants where tutor_id=$1 and child_id=$2 and active`, [rose.uid, BRIELLE]))[0]?.can_write
-  const { data: rRose } = await rec(rose.client, BRIELLE, P(BRIELLE), 'image/png', 500000)
+  const { data: rRose } = await rec(rose.client, BRIELLE, P(BRIELLE), 'image/jpeg', 500000)  // jpeg-only (0026)
   ;(roseWrite ? (rRose?.ok) : (rRose?.error === 'not_authorized'))
     ? ok(`granted tutor upload respects can_write (=${roseWrite}), role DERIVED=tutor`) : bad(`tutor: ${JSON.stringify(rRose)}`)
   const { data: rObs } = await rec(obs.client, BRIELLE, P(BRIELLE), 'image/jpeg', 500000)
@@ -75,8 +78,8 @@ try {
 
   // ---- storage bucket: private + limits + no permissive object policy ----
   const bkt = (await q(`select public, file_size_limit, allowed_mime_types from storage.buckets where id='uploads'`))[0]
-  bkt && bkt.public === false && Number(bkt.file_size_limit) === 10485760 && bkt.allowed_mime_types.join(',') === 'image/jpeg,image/png,image/heic'
-    ? ok('private bucket: public=false, 10MB limit, image mime allowlist') : bad(`bucket: ${JSON.stringify(bkt)}`)
+  bkt && bkt.public === false && Number(bkt.file_size_limit) === 10485760 && bkt.allowed_mime_types.join(',') === 'image/jpeg'
+    ? ok('private bucket: public=false, 10MB limit, jpeg-only allowlist (0026)') : bad(`bucket: ${JSON.stringify(bkt)}`)
   const objPol = (await q(`select count(*)::int n from pg_policies where schemaname='storage' and tablename='objects' and qual ilike '%uploads%'`))[0].n
   objPol === 0 ? ok('no permissive storage.objects policy for the bucket (server-mediated signed URLs only)') : bad(`storage policies referencing uploads: ${objPol}`)
 } finally {

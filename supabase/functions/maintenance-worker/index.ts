@@ -63,8 +63,8 @@ Deno.serve(async (req) => {
     const { data: claimed } = await service.rpc('claim_external_purge', { p_limit: 100 })
     let done = 0, failed = 0
     for (const row of (claimed ?? [])) {
-      const res = row.kind === 'storage' ? await purgeStorage(row.child_id) : await purgeAiProvider(row.child_id)
-      await service.rpc('complete_external_purge', { p_id: row.id, p_ok: res.ok, p_error: res.ok ? null : res.detail })
+      const res = row.kind === 'storage' ? await purgeStorage(service, row.child_id) : await purgeAiProvider(row.child_id)
+      await service.rpc('complete_external_purge', { p_id: row.id, p_ok: res.ok, p_error: res.ok ? null : res.detail, p_result: res.result ?? null })
       res.ok ? done++ : failed++
     }
     out.external_purge = { done, failed }

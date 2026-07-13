@@ -1,6 +1,6 @@
 # GOVERNANCE — SOURCE OF TRUTH (READ FIRST)
-The build's source of truth is **`docs/SPEC.md`** (the numbered, buildable specification — cite requirements by ID, e.g. SEC-02, LEG-03, DM-11, RM-07). It is governed by **`docs/ONE_PAGE.md`** (the distilled contract).
-**Governance order: `docs/ONE_PAGE.md` > `docs/SPEC.md` > everything else** (including this file and all other repo docs). If any doc disagrees with THE ONE PAGE, THE ONE PAGE wins and the other doc gets fixed. Amend by first-principles review, never by drift. This CLAUDE.md holds operating guardrails; the SPEC holds what we build.
+The build's source of truth is **`docs/SPEC.md`** (the numbered, buildable specification — cite requirements by ID, e.g. SEC-02, LEG-03, DM-11, RM-07). It is governed by **`docs/ONE_PAGE.md`** (the distilled contract). **`docs/BUILD_CHARTER.md`** is the standing operating constitution (mission, the eleven first principles, the founder doctrine set, architecture, guardrails, and the build cadence) — how we hold and execute the above.
+**Governance order: `docs/ONE_PAGE.md` > `docs/SPEC.md` > `docs/BUILD_CHARTER.md` > everything else** (including this file and all other repo docs). If any two disagree, the higher wins and the lower gets fixed. Amend by first-principles review, never by drift. This CLAUDE.md holds operating guardrails; the SPEC holds what we build; the CHARTER holds how we build it.
 
 # NON-NEGOTIABLE — READ FIRST
 This is a LIVE production app with REAL CHILDREN'S DATA, and you run with elevated permissions — so YOU are the last safety check. Act conservatively. STOP and get my explicit "yes" in chat BEFORE any of these; never self-approve; if unsure, treat it as on the list and ask:

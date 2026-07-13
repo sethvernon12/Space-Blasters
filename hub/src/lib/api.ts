@@ -97,6 +97,38 @@ export async function setUploadStatus(uploadId: string, status: string): Promise
   return !error && !!data?.ok
 }
 
+// Phase 5 · 5c — AI grading review. The trust signals (agreement, detector_clean) come from
+// the server (list_grade_proposals), computed from the trusted problem, never the image.
+export interface GradeProposal {
+  id: string; upload_id: string; skill_id: string; read_answer: number | null; confidence: number | null
+  feedback: string | null; provider: string; model: string; status: string; created_at: string
+  solver_answer: number | null; agreement: boolean; detector_clean: boolean
+}
+
+export async function submitUploadForGrading(uploadId: string, skillId: string, problem: { operator: string; a: number; b: number }, clientJobId: string): Promise<{ ok: boolean; job_id?: string; error?: string }> {
+  const { data, error } = await supabase.rpc('submit_upload_for_grading', {
+    p_upload_id: uploadId, p_skill_id: skillId, p_problem_dna: { operator: problem.operator, a: problem.a, b: problem.b }, p_client_job_id: clientJobId,
+  })
+  if (error) return { ok: false, error: error.message }
+  return data ?? { ok: false, error: 'unknown' }
+}
+
+export async function listGradeProposals(childId: string): Promise<GradeProposal[]> {
+  const { data } = await supabase.rpc('list_grade_proposals', { p_child_id: childId })
+  return (data?.proposals ?? []) as GradeProposal[]
+}
+
+export async function confirmImageGrade(proposalId: string, opts: { override?: string | null; correctedRead?: number | null } = {}): Promise<{ ok: boolean; verdict?: string; corrected?: boolean; error?: string }> {
+  const { data, error } = await supabase.rpc('confirm_image_grade', { p_proposal_id: proposalId, p_override_feedback: opts.override ?? null, p_corrected_read_answer: opts.correctedRead ?? null })
+  if (error) return { ok: false, error: error.message }
+  return data ?? { ok: false, error: 'unknown' }
+}
+
+export async function rejectImageGrade(proposalId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('reject_image_grade', { p_proposal_id: proposalId })
+  return !error && !!data?.ok
+}
+
 // Start the consent Checkout for a new child (Phase 3.5). Returns the Stripe
 // Checkout URL to redirect to; on payment, the signature-verified webhook creates
 // the child + immutable consent atomically (no child row exists before consent).

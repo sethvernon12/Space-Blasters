@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Icon } from '@/components/Icon'
+import { GradeReview } from '@/components/GradeReview'
 import { getUploadUrl, listUploads, setUploadStatus, uploadWork, type Upload } from '@/lib/api'
 import { blobToBase64, prepareImage } from '@/lib/imagePrep'
 
@@ -89,6 +90,8 @@ export function ChildInbox({ childId, childName, canWrite = true }: { childId: s
           ))}
         </ul>
       )}
+      {/* 5c — AI grading: send a page + the automation-bias-resistant review gate */}
+      <GradeReview childId={childId} childName={childName} canWrite={canWrite} uploads={items} imageUrls={thumbs} />
     </div>
   )
 }

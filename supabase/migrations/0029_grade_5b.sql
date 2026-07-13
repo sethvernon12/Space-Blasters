@@ -50,6 +50,9 @@ as $$
 declare v_parent uuid; v_child_ok boolean; v_acct_used numeric; v_acct_cap numeric;
 begin
   select parent_id into v_parent from public.children where id = p_child;
+  -- serialize concurrent sibling reservations per account so the read-then-act account-cap
+  -- check below cannot be raced past the cap (TOCTOU, SEC-03 LOW). Per-account, tx-scoped.
+  if v_parent is not null then perform pg_advisory_xact_lock(hashtext('grade-acct:' || v_parent::text)); end if;
   v_acct_cap := public.grade_account_daily_cap();
   insert into public.grade_cost_ledger (child_id, day, reserved) values (p_child, current_date, 0)
     on conflict (child_id, day) do nothing;

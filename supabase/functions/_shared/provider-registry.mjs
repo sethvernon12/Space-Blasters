@@ -29,10 +29,11 @@ export function isRegistered(name) {
 // FAIL CLOSED. Returns { ok, reason?, provider? }. Local: ok when registered. External: ok
 // ONLY when registered + no_train + zero_retention + bundle_included (all four).
 export function assertCallable(name) {
+  if (!isRegistered(name)) return { ok: false, reason: 'unregistered' } // own-property only: '__proto__'/'constructor' never resolve
   const p = PROVIDERS[name]
-  if (!p) return { ok: false, reason: 'unregistered' }
   if (p.kind === 'local') return { ok: true, provider: p }
-  if (!(p.no_train && p.zero_retention && p.bundle_included)) {
+  // external: EVERY attestation must be strictly true (a mis-authored non-boolean is refused)
+  if (!(p.no_train === true && p.zero_retention === true && p.bundle_included === true)) {
     return { ok: false, reason: 'external_not_certified_or_not_bundled' }
   }
   return { ok: true, provider: p }

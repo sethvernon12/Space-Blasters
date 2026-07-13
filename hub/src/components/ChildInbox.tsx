@@ -13,7 +13,7 @@ const STAGES = ['inbox', 'in_progress', 'graded', 'filed']
 // privacy promise) right on the control — never a bare button. EXIF/geo is stripped
 // on-device (imagePrep) then re-stripped server-side. `canWrite=false` (a view-only tutor)
 // renders the inbox READ-ONLY — no upload, no status control (writes are server-enforced too).
-export function ChildInbox({ childId, childName, canWrite = true }: { childId: string; childName: string; canWrite?: boolean }) {
+export function ChildInbox({ childId, childName, uid, canWrite = true }: { childId: string; childName: string; uid: string; canWrite?: boolean }) {
   const [items, setItems] = useState<Upload[]>([])
   const [thumbs, setThumbs] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -91,7 +91,7 @@ export function ChildInbox({ childId, childName, canWrite = true }: { childId: s
         </ul>
       )}
       {/* 5c — AI grading: send a page + the automation-bias-resistant review gate */}
-      <GradeReview childId={childId} childName={childName} canWrite={canWrite} uploads={items} imageUrls={thumbs} />
+      <GradeReview childId={childId} childName={childName} canWrite={canWrite} uid={uid} uploads={items} imageUrls={thumbs} />
     </div>
   )
 }

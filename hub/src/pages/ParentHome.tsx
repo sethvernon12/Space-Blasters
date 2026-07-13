@@ -196,7 +196,7 @@ export default function ParentHome({ profile }: { profile: Profile }) {
             </div>
 
             {/* homework-photo inbox — consented children only (uploads need VPC) */}
-            {c.consent_id && <ChildInbox childId={c.id} childName={c.nickname} />}
+            {c.consent_id && <ChildInbox childId={c.id} childName={c.nickname} uid={profile.uid} />}
           </Panel>
         )
       })}

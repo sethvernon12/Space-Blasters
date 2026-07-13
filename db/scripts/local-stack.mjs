@@ -69,6 +69,7 @@ export const FILES_M3 = [
   'supabase/migrations/0029_grade_5b.sql',
   'supabase/migrations/0030_grade_review.sql',
   'supabase/migrations/0031_grade_saf.sql',
+  'supabase/migrations/0032_grade_assignment_binding.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

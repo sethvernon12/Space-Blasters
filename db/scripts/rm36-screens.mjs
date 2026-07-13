@@ -39,6 +39,9 @@ const seed = async ({ read, clean = true, feedback }) => {
 await seed({ read: 42, clean: true, feedback: 'Great — that’s correct!' })                              // low friction
 await seed({ read: 41, clean: true, feedback: 'Looks off — please check.' })                            // high friction (disagree)
 await seed({ read: 42, clean: true, feedback: '<img src=x onerror="window.__xss_fired=true">bad' })     // XSS payload
+// 5e: a gradeable assignment so the assignment-backed submit picker shows a real option
+await q(`insert into public.assignments (child_id, assigned_by, skill_id, title, problem_dna)
+         values ($1::uuid,$2::uuid,'mult2','Times tables — 6×7','{"operator":"mul","a":6,"b":7}'::jsonb)`, [BRIELLE, seth.uid])
 await db.end()
 
 const server = spawn('python3', ['-m', 'http.server', String(PORT), '--directory', dist], { stdio: 'ignore' })
@@ -73,6 +76,9 @@ try {
         const xssFired = await page.evaluate(() => Boolean(window.__xss_fired))
         const feedbackText = (await page.getByTestId('ai-feedback').allInnerTexts()).join('\n')
         !xssFired && feedbackText.includes('<img') ? ok('XSS-safe: AI feedback renders as INERT text (onerror never fired; markup shown literally)') : bad(`xss: fired=${xssFired} text=${feedbackText.slice(0, 80)}`)
+        // 5e: the submit form binds to an assignment (not an inline problem)
+        const asgOpts = await page.getByTestId('grade-assignment').locator('option').allInnerTexts()
+        asgOpts.some((t) => /6 × 7|Times tables/.test(t)) ? ok('5e: submit form offers the gradeable ASSIGNMENT (problem bound to it, not typed inline)') : bad(`assignment picker: ${JSON.stringify(asgOpts)}`)
       }
       await ctx.close()
     } catch (e) { bad(`${v.name}: ${e.message}`) }

@@ -153,7 +153,7 @@ export default function TutorHome({ profile }: { profile: Profile }) {
             )}
 
             {/* homework inbox — upload + status lifecycle for a can-teach tutor; read-only for view-only */}
-            <ChildInbox childId={c.id} childName={c.nickname} canWrite={canWrite} />
+            <ChildInbox childId={c.id} childName={c.nickname} uid={profile.uid} canWrite={canWrite} />
           </Panel>
         )
       })}

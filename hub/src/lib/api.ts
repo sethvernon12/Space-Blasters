@@ -8,7 +8,8 @@ export interface ChildRow { id: string; nickname: string; grade_band: string | n
 export interface Grant { child_id: string; can_write: boolean; active: boolean }
 export interface SkillMastery { skillKey: string; displayName: string; subject: string; mastery: number; attempts: number; correct: number; position: number }
 export interface NextActivity { action: 'keep_practicing' | 'ease' | 'advance'; icon: string; reason: string; focusSkill: string; displayName: string }
-export interface Assignment { id: string; title: string; skill_id: string; status: string; created_at: string }
+export interface Problem { operator: string; a: number; b: number }
+export interface Assignment { id: string; title: string; skill_id: string; status: string; created_at: string; problem_dna: Problem | null }
 export interface Artifact { id: string; kind: string; author_role: string; payload: Record<string, unknown>; created_at: string }
 
 interface MasteryRow {
@@ -105,9 +106,11 @@ export interface GradeProposal {
   solver_answer: number | null; agreement: boolean; detector_clean: boolean
 }
 
-export async function submitUploadForGrading(uploadId: string, skillId: string, problem: { operator: string; a: number; b: number }, clientJobId: string): Promise<{ ok: boolean; job_id?: string; error?: string }> {
+// 5e — the problem is bound to an ASSIGNMENT (server-derived, trusted); the client no longer
+// supplies a problem. Cross-family / not-this-child / problem-less bindings fail closed server-side.
+export async function submitUploadForGrading(uploadId: string, assignmentId: string, clientJobId: string): Promise<{ ok: boolean; job_id?: string; error?: string }> {
   const { data, error } = await supabase.rpc('submit_upload_for_grading', {
-    p_upload_id: uploadId, p_skill_id: skillId, p_problem_dna: { operator: problem.operator, a: problem.a, b: problem.b }, p_client_job_id: clientJobId,
+    p_upload_id: uploadId, p_assignment_id: assignmentId, p_client_job_id: clientJobId,
   })
   if (error) return { ok: false, error: error.message }
   return data ?? { ok: false, error: 'unknown' }
@@ -299,8 +302,16 @@ export async function recordAttemptsAuthed(childId: string, events: AttemptDraft
 export async function createAssignment(childId: string, uid: string, skillId: string, title: string) {
   return supabase.from('assignments').insert({ child_id: childId, assigned_by: uid, skill_id: skillId, title }).select()
 }
+// 5e — a gradeable assignment carries the trusted single-problem spec the grader arbitrates from.
+export async function createGradeableAssignment(childId: string, uid: string, skillId: string, title: string, problem: Problem): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const { data, error } = await supabase.from('assignments')
+    .insert({ child_id: childId, assigned_by: uid, skill_id: skillId, title, problem_dna: { operator: problem.operator, a: problem.a, b: problem.b } })
+    .select('id').maybeSingle()
+  if (error) return { ok: false, error: error.message }
+  return { ok: true, id: data?.id }
+}
 export async function listAssignments(childId: string): Promise<Assignment[]> {
-  const { data } = await supabase.from('assignments').select('id,title,skill_id,status,created_at').eq('child_id', childId).order('created_at', { ascending: false })
+  const { data } = await supabase.from('assignments').select('id,title,skill_id,status,created_at,problem_dna').eq('child_id', childId).order('created_at', { ascending: false })
   return (data ?? []) as Assignment[]
 }
 export async function createGrade(childId: string, uid: string, payload: Record<string, unknown>) {

@@ -46,7 +46,13 @@ const seedUpload = async () => (await q(
 const dna = (child, extra = {}) => ({ operator: 'mul', a: 6, b: 7, correct_answer: 42, mock_child_answer: child, ...extra })
 // authored-path RPCs go through an authenticated CLIENT (auth.uid() from the JWT); reads
 // + the service-path purge go through the superuser pg connection.
-const submit = (client, upId, dnaObj) => client.rpc('submit_upload_for_grading', { p_upload_id: upId, p_skill_id: 'mult2', p_problem_dna: dnaObj, p_client_job_id: uuid() }).then((r) => r.data)
+// 5e: the problem is bound to an ASSIGNMENT (server-derived). Fixture: create a gradeable
+// assignment carrying the problem (incl the dev local_read via mock_child_answer), then submit.
+const submit = async (client, upId, dnaObj) => {
+  const child = (await q(`select child_id from public.uploads where id=$1`, [upId]))[0].child_id
+  const asg = (await q(`insert into public.assignments (child_id, assigned_by, skill_id, title, problem_dna) values ($1::uuid,$2::uuid,'mult2','grade fixture',$3::jsonb) returning id`, [child, uids.seth, JSON.stringify(dnaObj)]))[0].id
+  return client.rpc('submit_upload_for_grading', { p_upload_id: upId, p_assignment_id: asg, p_client_job_id: uuid() }).then((r) => r.data)
+}
 const confirm = (client, propId, override = null) => client.rpc('confirm_image_grade', { p_proposal_id: propId, p_override_feedback: override }).then((r) => r.data)
 
 const envFile = path.join(root, 'supabase', '.env.rm34'); fs.writeFileSync(envFile, `GRADE_WORKER_SECRET=${SECRET}\n`)

@@ -67,7 +67,12 @@ const seedUpload = async (child = BRIELLE, withObject = false) => {
                   values ($1::uuid,$2::uuid,'parent',$3,'image/jpeg',$4,true,'inbox') returning id`, [child, uids.seth, name, JPEG.length]))[0].id
 }
 const dna = (localRead, extra = {}) => ({ operator: 'mul', a: 6, b: 7, correct_answer: 42, local_read: localRead, ...extra })
-const submit = (upId, dnaObj, skill = 'mult2') => seth.client.rpc('submit_upload_for_grading', { p_upload_id: upId, p_skill_id: skill, p_problem_dna: dnaObj, p_client_job_id: uuid() }).then((r) => r.data)
+// 5e: submit binds to a gradeable ASSIGNMENT (server derives the problem). Fixture creates one.
+const submit = async (upId, dnaObj) => {
+  const child = (await q(`select child_id from public.uploads where id=$1`, [upId]))[0].child_id
+  const asg = (await q(`insert into public.assignments (child_id, assigned_by, skill_id, title, problem_dna) values ($1::uuid,$2::uuid,'mult2','grade fixture',$3::jsonb) returning id`, [child, uids.seth, JSON.stringify(dnaObj)]))[0].id
+  return seth.client.rpc('submit_upload_for_grading', { p_upload_id: upId, p_assignment_id: asg, p_client_job_id: uuid() }).then((r) => r.data)
+}
 const confirm = (propId, { override = null, corrected = null } = {}) => seth.client.rpc('confirm_image_grade', { p_proposal_id: propId, p_override_feedback: override, p_corrected_read_answer: corrected }).then((r) => r.data)
 const propFor = async (jobId) => (await q(`select id, read_answer, provider, status from public.grade_proposals where job_id=$1`, [jobId]))[0]
 const resetLedger = (child) => q(`delete from public.grade_cost_ledger where child_id=$1`, [child])

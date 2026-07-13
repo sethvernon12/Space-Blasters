@@ -1,0 +1,1 @@
+CNN digit classifier — weights trained by The All-Around Athlete Academy on our own synthetic digit glyphs. Our own artifact. tfjs runtime: Apache-2.0.

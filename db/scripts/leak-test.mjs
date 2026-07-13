@@ -336,3 +336,33 @@ test('skills taxonomy is readable by signed-in users and write-protected', async
     await rejects(c, `update public.skills set display_name = 'hacked' where id = 'add5'`, undefined, /permission denied/i);
   });
 });
+
+// Phase 5 · 5a: the grade-job spine tables are child-scoped like everything else.
+test('grading tables (5a): rows exist but cross-family reads zero; ledger is service-only', async () => {
+  // seed (committed, as owner/superuser) a grade job + proposal + ledger for child A1
+  const up = (await db.client.query(
+    `insert into public.uploads (child_id, uploaded_by, uploader_role, storage_path, content_type, byte_size, exif_stripped, status)
+     values ($1::uuid,$1::uuid,'parent',$2,'image/jpeg',1,true,'inbox') returning id`, [FIX.childA1, `${FIX.childA1}/leak.jpg`])).rows[0].id;
+  const job = (await db.client.query(
+    `insert into public.grade_jobs (child_id, upload_id, skill_id, problem_dna, client_job_id)
+     values ($1,$2,'mult2','{}'::jsonb, gen_random_uuid()) returning id`, [FIX.childA1, up])).rows[0].id;
+  await db.client.query(
+    `insert into public.grade_proposals (job_id, child_id, upload_id, skill_id, read_answer, provider)
+     values ($1,$2,$3,'mult2',42,'mock')`, [job, FIX.childA1, up]);
+  await db.client.query(`insert into public.grade_cost_ledger (child_id, reserved) values ($1, 1)`, [FIX.childA1]);
+
+  // the rows really exist (queried as the table owner — proves the zero below is isolation, not emptiness)
+  assert.equal((await db.client.query('select count(*)::int n from public.grade_jobs where child_id = $1', [FIX.childA1])).rows[0].n, 1);
+  assert.equal((await db.client.query('select count(*)::int n from public.grade_proposals where child_id = $1', [FIX.childA1])).rows[0].n, 1);
+  // cross-FAMILY: parent B sees zero grade rows; the cost ledger has no client grant at all
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.grade_jobs where child_id = $1', [FIX.childA1]), 0);
+    assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA1]), 0);
+    await rejects(c, 'select 1 from public.grade_cost_ledger where child_id = $1', [FIX.childA1], /permission denied/i);
+  });
+  // cross-CHILD, same family: sibling A2's login sees none of A1's grade rows
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.grade_jobs where child_id = $1', [FIX.childA2]), 0);
+    assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA2]), 0);
+  });
+});

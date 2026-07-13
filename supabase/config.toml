@@ -452,3 +452,8 @@ verify_jwt = true
 
 [functions.get-upload-url]
 verify_jwt = true
+
+# Phase 5 · 5a — the async grade-job worker (MOCK adapter; no external call). Not
+# user-facing: shared-secret auth (fail-closed), same doctrine as maintenance-worker.
+[functions.grade-worker]
+verify_jwt = false

@@ -47,6 +47,44 @@ grant usage on schema auth to anon, authenticated, service_role;
 grant execute on function auth.uid() to anon, authenticated, service_role;
 grant usage on schema extensions to anon, authenticated, service_role;
 
+-- ---- Minimal auth.users / auth.identities mocks (EPHEMERAL ONLY) ----
+-- The full Supabase local stack provides the real auth schema; the throwaway leak-test
+-- DB does not. Migrations that reference these at apply time (e.g. 0023's provider_id
+-- lookup) or at runtime (0019 dormant join) need them to exist. Structure only.
+create table if not exists auth.users (
+  id              uuid primary key,
+  email           text,
+  last_sign_in_at timestamptz,
+  created_at      timestamptz default now()
+);
+create table if not exists auth.identities (
+  provider_id text not null,
+  user_id     uuid not null,
+  provider    text not null default 'google',
+  created_at  timestamptz default now()
+);
+
+-- ---- Minimal storage.buckets / storage.objects mocks (EPHEMERAL ONLY) ----
+-- The full local stack provides the storage schema; the throwaway DB does not. Phase-4
+-- migrations insert a bucket (0024) and read the object catalog (0027 manifest).
+create schema if not exists storage;
+grant usage on schema storage to anon, authenticated, service_role;
+create table if not exists storage.buckets (
+  id                text primary key,
+  name              text,
+  public            boolean default false,
+  file_size_limit   bigint,
+  allowed_mime_types text[],
+  created_at        timestamptz default now()
+);
+create table if not exists storage.objects (
+  id         uuid primary key default gen_random_uuid(),
+  bucket_id  text,
+  name       text,
+  owner      uuid,
+  created_at timestamptz default now()
+);
+
 -- ---- Mirror of the EXISTING production players table (structure only) ----
 -- Production: players + SECURITY DEFINER RPCs signup_or_login / submit_score /
 -- get_leaderboard, callable with the publishable key. Do not modify in prod.

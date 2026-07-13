@@ -16,7 +16,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
-import { mockGradeAdapter } from '../../supabase/functions/_shared/grade-adapter.mjs'
+import { gradeAdapter } from '../../supabase/functions/_shared/grade-adapter.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const SECRET = 'grade_secret_rm34'
@@ -74,8 +74,8 @@ try {
   const prop = (await q(`select id, status, provider, read_answer, grade_event_id from public.grade_proposals where job_id=$1`, [sub.job_id]))[0]
   const jobAfter = (await q(`select status, actual_cost from public.grade_jobs where id=$1`, [sub.job_id]))[0]
   const ledger = (await q(`select reserved, settled from public.grade_cost_ledger where child_id=$1 and day=current_date`, [BRIELLE]))[0]
-  w1.status === 200 && prop?.status === 'pending' && prop.provider === 'mock' && prop.read_answer === 42 && jobAfter.status === 'proposed' && Number(ledger.settled) === 1 && Number(ledger.reserved) === 0
-    ? ok('worker: MOCK proposal PENDING (provider=mock, read=42); job proposed; cost settled (→call→settle)') : bad(`drain: ${JSON.stringify({ prop, jobAfter, ledger, w1: w1.body })}`)
+  w1.status === 200 && prop?.status === 'pending' && prop.provider === 'local' && prop.read_answer === 42 && jobAfter.status === 'proposed' && Number(ledger.settled) === 0 && Number(ledger.reserved) === 0
+    ? ok('worker: guardrailed adapter proposal PENDING (provider=local, read=42); job proposed; cost settled (→call→settle)') : bad(`drain: ${JSON.stringify({ prop, jobAfter, ledger, w1: w1.body })}`)
 
   // ---- 2. 100% HUMAN: nothing recorded until confirm ----
   const noGradeYet = (await q(`select count(*)::int n from public.events where kind='grade' and subject_child_id=$1`, [BRIELLE]))[0].n === 0
@@ -86,7 +86,7 @@ try {
   const gradeEv = (await q(`select payload from public.events where kind='grade' and subject_child_id=$1 order by created_at desc limit 1`, [BRIELLE]))[0]?.payload
   const assess = (await q(`select graded_count, correct_count, transfer_success_count from public.child_skill_assessment where child_id=$1 and skill_id='mult2'`, [BRIELLE]))[0]
   const fb = (await q(`select payload->>'feedback' f, visibility_scope from public.teaching_artifacts where child_id=$1 and kind='feedback' order by created_at desc limit 1`, [BRIELLE]))[0]
-  conf.ok && conf.verdict === 'correct' && gradeEv?.verdict === 'correct' && gradeEv.solver_answer === 42 && gradeEv.read_answer === 42
+  conf.ok && conf.verdict === 'correct' && gradeEv?.verdict === 'correct' && gradeEv.solver_answer === 42 && gradeEv.effective_read === 42
     && assess?.transfer_success_count === 1 && fb?.visibility_scope === 'sent-to-child'
     ? ok('confirm (correct): append-only grade Event (solver=42==read=42); transfer projection +1; moderated feedback sent-to-child') : bad(`confirm: ${JSON.stringify({ conf, gradeEv, assess, fb })}`)
 
@@ -152,10 +152,10 @@ try {
   jSafter === 'proposed' && propS === 1
     ? ok('MED: a stale claimed job is reclaimed → proposed EXACTLY once (reservation settled, not leaked)') : bad(`reclaim: status=${jSafter} props=${propS}`)
 
-  // ---- 8. the shared MOCK adapter makes no external call (unit) ----
-  const g = mockGradeAdapter({ problem_dna: dna(42) })
-  g.provider === 'mock' && g.read_answer === 42 && typeof g.read_answer === 'number'
-    ? ok('MOCK adapter: provider=mock, reads the answer, NO external vendor (5a border)') : bad(`adapter: ${JSON.stringify(g)}`)
+  // ---- 8. the guardrailed adapter is local-first, no external call (unit) ----
+  const g = gradeAdapter({ problem_dna: dna(42) }, null)
+  g.ok && g.output.provider === 'local' && g.output.read_answer === 42
+    ? ok('guardrailed adapter: local-first (provider=local), reads the answer, external unreachable in bundle') : bad(`adapter: ${JSON.stringify(g)}`)
 
   // ---- 9. AC-6 + purge: new tables deleted + counted; nothing escapes ----
   const pr = (await q(`select public.purge_child($1,$2,$3) r`, [BRIELLE, uids.seth, uids.seth]))[0].r

@@ -66,6 +66,7 @@ export const FILES_M3 = [
   'supabase/migrations/0026_uploads_jpeg_only.sql',
   'supabase/migrations/0027_uploads_retention.sql',
   'supabase/migrations/0028_grade_jobs.sql',
+  'supabase/migrations/0029_grade_5b.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

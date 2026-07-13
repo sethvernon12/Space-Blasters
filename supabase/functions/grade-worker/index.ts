@@ -9,7 +9,9 @@
 // (writes a PENDING proposal + settles the reserved cost; Realtime notifies the UI).
 // A proposal is only that — nothing counts until a human confirms (confirm_image_grade).
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { mockGradeAdapter } from '../_shared/grade-adapter.mjs'
+import { gradeAdapter } from '../_shared/grade-adapter.mjs'
+
+const UPLOADS_BUCKET = 'uploads'
 
 const URL_ = Deno.env.get('SUPABASE_URL')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -33,10 +35,20 @@ Deno.serve(async (req) => {
     const { data: claimed } = await service.rpc('claim_grade_jobs', { p_limit: Number(body?.limit ?? 20) })
     for (const job of (claimed ?? [])) {
       try {
-        const g = mockGradeAdapter(job) // deterministic; no external call
+        // fetch the upload object BYTES and hand them to the adapter INLINE — never a
+        // fetchable URL to any external party (the local reader ignores them; the real
+        // model at the gate reads from them). Best-effort: the local path works regardless.
+        let bytes: Uint8Array | null = null
+        if (job.storage_path) {
+          const { data: blob } = await service.storage.from(UPLOADS_BUCKET).download(job.storage_path)
+          if (blob) bytes = new Uint8Array(await blob.arrayBuffer())
+        }
+        const g = gradeAdapter(job, bytes) // guardrailed: local-first, external unreachable in bundle
+        if (!g.ok) { await service.rpc('fail_grade_job', { p_job_id: job.id, p_error: g.error }); out.failed = (out.failed as number) + 1; continue }
+        const o = g.output!
         const { data: rec } = await service.rpc('record_grade_proposal', {
-          p_job_id: job.id, p_read_answer: g.read_answer, p_confidence: g.confidence, p_feedback: g.feedback,
-          p_misconception_id: g.misconception_id, p_model: g.model, p_provider: g.provider, p_cost: g.cost, p_latency: g.latency_ms,
+          p_job_id: job.id, p_read_answer: o.read_answer, p_confidence: o.confidence, p_feedback: o.feedback,
+          p_misconception_id: o.misconception_id, p_model: o.model, p_provider: o.provider, p_cost: o.cost, p_latency: o.latency_ms,
         })
         rec?.ok ? (out.proposed = (out.proposed as number) + 1) : await service.rpc('fail_grade_job', { p_job_id: job.id, p_error: rec?.error ?? 'record_failed' })
         if (!rec?.ok) out.failed = (out.failed as number) + 1

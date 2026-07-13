@@ -64,6 +64,15 @@ try {
   // ---- the OLD signature (client-supplied problem) is GONE ----
   const legacy = await seth.client.rpc('submit_upload_for_grading', { p_upload_id: upB, p_skill_id: 'mult2', p_problem_dna: { operator: 'mul', a: 9, b: 9 }, p_client_job_id: uuid() })
   legacy.error ? ok('the old client-supplied-problem signature no longer exists (a tampered problem cannot be submitted)') : bad(`legacy sig still callable: ${JSON.stringify(legacy.data)}`)
+
+  // ---- SEC-03 LOW fix: grade_solve is TOTAL (a malformed/overflowing problem → null, never a throw) ----
+  const solve = async (dna) => (await q(`select public.grade_solve($1::jsonb) v`, [JSON.stringify(dna)]))[0].v
+  const sValid = await solve({ operator: 'mul', a: 6, b: 7 })
+  const sBadOperand = await solve({ operator: 'mul', a: 'abc', b: 7 })
+  const sOverflow = await solve({ operator: 'mul', a: 999999999, b: 999999999 })
+  const sDivZero = await solve({ operator: 'div', a: 5, b: 0 })
+  sValid === 42 && sBadOperand === null && sOverflow === null && sDivZero === null
+    ? ok('grade_solve is total: valid=42; non-numeric/overflow/div-0 all → null (no throw → no confirm abort)') : bad(`grade_solve: ${JSON.stringify({ sValid, sBadOperand, sOverflow, sDivZero })}`)
 } finally {
   await db.end()
 }

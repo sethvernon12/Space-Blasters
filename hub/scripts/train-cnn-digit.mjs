@@ -31,7 +31,7 @@ const GLYPHS = {
   9: ['01110', '10001', '10001', '01111', '00001', '00010', '01100'],
 }
 
-// deterministic PRNG (no Math.random — keeps the build reproducible)
+// deterministic PRNG for augmentation (no Math.random)
 let seed = 1234567
 const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
 
@@ -56,7 +56,9 @@ function render(digit) {
 
 function dataset(perDigit) {
   const xs = [], ys = []
-  for (let d = 0; d <= 9; d++) for (let k = 0; k < perDigit; k++) { xs.push(render(d)); ys.push(d) }
+  // round-robin (k outer, d inner) so no-shuffle batches are well-mixed across classes AND
+  // the order is deterministic → a reproducible build with good training dynamics.
+  for (let k = 0; k < perDigit; k++) for (let d = 0; d <= 9; d++) { xs.push(render(d)); ys.push(d) }
   const x = tf.tensor4d(Float32Array.from(xs.flatMap((a) => Array.from(a))), [xs.length, 28, 28, 1])
   const y = tf.oneHot(tf.tensor1d(ys, 'int32'), 10)
   return { x, y }
@@ -64,19 +66,22 @@ function dataset(perDigit) {
 
 async function main() {
   await tf.setBackend('cpu'); await tf.ready()
+  // seeded kernel initializers + no-shuffle fit (below) → the whole build is REPRODUCIBLE:
+  // re-running the trainer regenerates the exact committed weights.bin.
+  const init = (s) => tf.initializers.glorotNormal({ seed: s })
   const m = tf.sequential()
-  m.add(tf.layers.conv2d({ inputShape: [28, 28, 1], filters: 8, kernelSize: 3, activation: 'relu' }))
+  m.add(tf.layers.conv2d({ inputShape: [28, 28, 1], filters: 8, kernelSize: 3, activation: 'relu', kernelInitializer: init(11) }))
   m.add(tf.layers.maxPooling2d({ poolSize: 2 }))
-  m.add(tf.layers.conv2d({ filters: 16, kernelSize: 3, activation: 'relu' }))
+  m.add(tf.layers.conv2d({ filters: 16, kernelSize: 3, activation: 'relu', kernelInitializer: init(22) }))
   m.add(tf.layers.maxPooling2d({ poolSize: 2 }))
   m.add(tf.layers.flatten())
-  m.add(tf.layers.dense({ units: 32, activation: 'relu' }))
-  m.add(tf.layers.dense({ units: 10, activation: 'softmax' }))
+  m.add(tf.layers.dense({ units: 32, activation: 'relu', kernelInitializer: init(33) }))
+  m.add(tf.layers.dense({ units: 10, activation: 'softmax', kernelInitializer: init(44) }))
   m.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy', metrics: ['accuracy'] })
 
   const train = dataset(35), val = dataset(10)
   await m.fit(train.x, train.y, {
-    epochs: 8, batchSize: 32, validationData: [val.x, val.y], verbose: 0,
+    epochs: 8, batchSize: 32, shuffle: false, validationData: [val.x, val.y], verbose: 0,
     callbacks: { onEpochEnd: (e, l) => { if (e % 5 === 4) console.log(`epoch ${e + 1}: val_acc=${l.val_acc?.toFixed(3)}`) } },
   })
   const evalr = m.evaluate(val.x, val.y)

@@ -31,7 +31,7 @@ for (const f of ['model.json', 'weights.bin']) fs.copyFileSync(path.join(root, '
 fs.writeFileSync(path.join(dir, 'index.html'), `<!doctype html><html><body><script src="tf.min.js"></script><script>
 const G={0:['01110','10001','10011','10101','11001','10001','01110'],1:['00100','01100','00100','00100','00100','00100','01110'],2:['01110','10001','00001','00010','00100','01000','11111'],3:['11110','00001','00001','01110','00001','00001','11110'],4:['00010','00110','01010','10010','11111','00010','00010'],5:['11111','10000','11110','00001','00001','10001','01110'],6:['00110','01000','10000','11110','10001','10001','01110'],7:['11111','00001','00010','00100','01000','01000','01000'],8:['01110','10001','10001','01110','10001','10001','01110'],9:['01110','10001','10001','01111','00001','00010','01100']};
 function imgOf(d,jx,jy){const c=document.createElement('canvas');c.width=28;c.height=28;const x=c.getContext('2d');x.fillStyle='#000';x.fillRect(0,0,28,28);x.fillStyle='#fff';const g=G[d],s=2.8,ox=(28-5*s)/2+jx,oy=(28-7*s)/2+jy;for(let r=0;r<7;r++)for(let cc=0;cc<5;cc++)if(g[r][cc]==='1')x.fillRect(ox+cc*s,oy+r*s,s,s);return x.getImageData(0,0,28,28);}
-function valid(o){const ra=o.read_answer;if(!(ra===null||Number.isInteger(ra)))return null;if(!(typeof o.confidence==='number'&&o.confidence>=0&&o.confidence<=1))return null;return o;}
+function valid(o){const ra=o.read_answer;if(!(ra===null||Number.isInteger(ra)))return null;if(!(typeof o.confidence==='number'&&Number.isFinite(o.confidence)&&o.confidence>=0&&o.confidence<=1))return null;if(typeof o.provider!=='string')return null;return o;}
 (async()=>{
   const model=await tf.loadLayersModel('model/model.json');   // self-hosted, same-origin
   const rows=[];

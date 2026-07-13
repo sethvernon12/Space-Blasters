@@ -364,5 +364,9 @@ test('grading tables (5a): rows exist but cross-family reads zero; ledger is ser
   await as('authenticated', FIX.childA1Login, async (c) => {
     assert.equal(await count(c, 'select 1 from public.grade_jobs where child_id = $1', [FIX.childA2]), 0);
     assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA2]), 0);
+    // SAF (0031): the SUBJECT child sees none of its OWN pending proposals/jobs either —
+    // unconfirmed AI grades never reach the child (only the moderated sent-to-child artifact does)
+    assert.equal(await count(c, 'select 1 from public.grade_jobs where child_id = $1', [FIX.childA1]), 0);
+    assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA1]), 0);
   });
 });

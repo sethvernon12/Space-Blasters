@@ -7,7 +7,7 @@
 // ============================================================================
 import pgpkg from 'pg'
 import { fileURLToPath } from 'node:url'
-import { m3Config, setupFamily, signInAs, FAMILY } from './family.mjs'
+import { m3Config, setupFamily, signInAs, mintChildSession, FAMILY } from './family.mjs'
 
 void fileURLToPath
 let fails = 0
@@ -70,6 +70,17 @@ try {
   const cross = (await dana.client.rpc('list_grade_proposals', { p_child_id: BRIELLE })).data
   cross?.ok === false && cross.error === 'not_authorized'
     ? ok('ISO: another family cannot list a child’s grade proposals (not_authorized)') : bad(`cross: ${JSON.stringify(cross)}`)
+
+  // ---- SAF (SEC-03 must-fix): the SUBJECT CHILD cannot read its own unconfirmed proposals ----
+  const brielle = await mintChildSession(cfg, seth.client, BRIELLE)      // the child's own minted login
+  const childRpc = (await brielle.client.rpc('list_grade_proposals', { p_child_id: BRIELLE })).data
+  const { data: childDirect } = await brielle.client.from('grade_proposals').select('id').eq('child_id', BRIELLE)
+  const { data: childJobs } = await brielle.client.from('grade_jobs').select('id').eq('child_id', BRIELLE)
+  childRpc?.ok === false && childRpc.error === 'not_authorized' && (childDirect?.length ?? 0) === 0 && (childJobs?.length ?? 0) === 0
+    ? ok('SAF: the subject child CANNOT read its own pending proposals — RPC not_authorized + 0 rows via table (child sees nothing until a human confirms)') : bad(`child self-read: rpc=${JSON.stringify(childRpc)} direct=${childDirect?.length} jobs=${childJobs?.length}`)
+  // the parent (adult reviewer) still sees them (not over-tightened)
+  const parentStill = (await seth.client.rpc('list_grade_proposals', { p_child_id: BRIELLE })).data
+  parentStill?.ok && (parentStill.proposals?.length ?? 0) === 4 ? ok('the owning parent still sees all 4 (adult reviewer audience intact)') : bad(`parent regression: ${parentStill?.proposals?.length}`)
 } finally {
   await db.end()
 }

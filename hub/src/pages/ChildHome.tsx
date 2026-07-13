@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Panel } from '@/components/Panel'
 import { Icon } from '@/components/Icon'
 import { MasteryBar } from '@/components/MasteryBar'
+import { ChildFeedback } from '@/components/ChildFeedback'
 import { PracticeModule } from '@/components/PracticeModule'
 import { childExists, getMastery, listAssignments, nextBestActivity, type Assignment, type SkillMastery } from '@/lib/api'
 import { GAME_URL } from '@/lib/config'
@@ -93,6 +94,9 @@ export default function ChildHome({ profile }: { profile: Profile }) {
               ))}
             </ul>}
       </Panel>
+
+      {/* 5d — the child sees ONLY the human-moderated notes an adult confirmed */}
+      <ChildFeedback childId={child.id} />
 
       {assignments.length > 0 && (
         <Panel>

@@ -129,6 +129,19 @@ export async function rejectImageGrade(proposalId: string): Promise<boolean> {
   return !error && !!data?.ok
 }
 
+// Phase 5 · 5d — the child's own feedback view. The child reads ONLY the human-moderated
+// `sent-to-child` feedback created on confirm — never a raw/unconfirmed AI proposal. RLS
+// (0006) already excludes 'private' scopes for the child, and 0031 excludes the child from
+// grade_proposals; the scope filter here is the intent, the RLS is the enforcement.
+export interface ChildFeedbackNote { id: string; feedback: string; created_at: string; target_kind: string | null }
+export async function listChildFeedback(childId: string): Promise<ChildFeedbackNote[]> {
+  const { data } = await supabase.from('teaching_artifacts')
+    .select('id,payload,created_at,target_kind')
+    .eq('child_id', childId).eq('kind', 'feedback').eq('visibility_scope', 'sent-to-child')
+    .order('created_at', { ascending: false })
+  return (data ?? []).map((r) => ({ id: r.id, feedback: String((r.payload as Record<string, unknown>)?.feedback ?? ''), created_at: r.created_at, target_kind: r.target_kind }))
+}
+
 // Start the consent Checkout for a new child (Phase 3.5). Returns the Stripe
 // Checkout URL to redirect to; on payment, the signature-verified webhook creates
 // the child + immutable consent atomically (no child row exists before consent).

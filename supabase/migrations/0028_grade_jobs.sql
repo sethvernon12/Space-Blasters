@@ -46,6 +46,7 @@ begin
   end if;
   return nullif(p_dna->>'correct_answer', '')::int;   -- fallback (still trusted: from the assignment, not the image)
 end $$;
+revoke all on function public.grade_solve(jsonb) from public, anon, authenticated;   -- called only from definer bodies (owner context)
 
 -- ---- 2. grade_cost_ledger: per-child/day reserve→settle budget (abuse cap) ----
 create table public.grade_cost_ledger (
@@ -61,6 +62,7 @@ revoke all on public.grade_cost_ledger from public, anon, authenticated;   -- se
 
 -- daily cap per child (mock units; a real cost cap is set with the live adapter in 5b)
 create or replace function public.grade_daily_cap() returns numeric language sql immutable set search_path = '' as $$ select 500::numeric $$;
+revoke all on function public.grade_daily_cap() from public, anon, authenticated;
 
 -- atomic reserve: fails closed if it would exceed the child's daily cap
 create or replace function public.reserve_grade_budget(p_child uuid, p_estimate numeric)
@@ -77,6 +79,9 @@ begin
   returning true into v_ok;
   return coalesce(v_ok, false);
 end $$;
+-- SECURITY DEFINER + mutates the child-keyed ledger: NEVER client-callable (HIGH, SEC-03).
+-- Reached only from the definer body of submit_upload_for_grading (owner context).
+revoke all on function public.reserve_grade_budget(uuid, numeric) from public, anon, authenticated;
 
 -- settle: release the reserved estimate, book the actual
 create or replace function public.settle_grade_cost(p_child uuid, p_estimate numeric, p_actual numeric)
@@ -87,6 +92,9 @@ begin
      set reserved = greatest(0, reserved - p_estimate), settled = settled + coalesce(p_actual, 0)
    where child_id = p_child and day = current_date;
 end $$;
+-- SECURITY DEFINER + mutates the child-keyed ledger: NEVER client-callable (HIGH, SEC-03).
+-- Reached only from the definer bodies of record_grade_proposal / fail_grade_job.
+revoke all on function public.settle_grade_cost(uuid, numeric, numeric) from public, anon, authenticated;
 
 -- ---- 3. grade_jobs: the async queue (one per submitted upload) ---------------
 create table public.grade_jobs (
@@ -189,7 +197,9 @@ begin
   return query
   update public.grade_jobs q set status = 'claimed', attempts = q.attempts + 1, updated_at = now()
    where q.id in (
-     select c.id from public.grade_jobs c where c.status = 'pending'
+     select c.id from public.grade_jobs c
+      where c.status = 'pending'
+         or (c.status = 'claimed' and c.updated_at < now() - interval '5 minutes')  -- reclaim a dead worker's job (release the reservation, MED SEC-03)
       order by c.created_at limit greatest(coalesce(p_limit, 20), 1) for update skip locked)
   returning q.id, q.child_id, q.upload_id, q.skill_id, q.problem_dna;
 end $$;
@@ -204,13 +214,16 @@ returns jsonb language plpgsql security definer set search_path = ''
 as $$
 declare v_job public.grade_jobs%rowtype; v_id uuid;
 begin
-  select * into v_job from public.grade_jobs where id = p_job_id;
-  if v_job.id is null then return jsonb_build_object('ok', false, 'error', 'unknown_job'); end if;
+  -- atomically WIN the claimed→proposed transition: only the winner records + settles, so a
+  -- stale-reclaim double (two workers on one job) yields exactly one proposal + one settle.
+  update public.grade_jobs set status = 'proposed', actual_cost = p_cost, updated_at = now()
+   where id = p_job_id and status = 'claimed'
+  returning * into v_job;
+  if v_job.id is null then return jsonb_build_object('ok', false, 'error', 'not_claimable'); end if;   -- already proposed/failed
   insert into public.grade_proposals (job_id, child_id, upload_id, skill_id, read_answer, confidence, feedback, misconception_id, model_version, provider, cost, latency_ms)
   values (p_job_id, v_job.child_id, v_job.upload_id, v_job.skill_id, p_read_answer, p_confidence,
           left(coalesce(p_feedback, ''), 2000), p_misconception_id, p_model, coalesce(p_provider, 'mock'), p_cost, p_latency)
   returning id into v_id;
-  update public.grade_jobs set status = 'proposed', actual_cost = p_cost, updated_at = now() where id = p_job_id;
   perform public.settle_grade_cost(v_job.child_id, v_job.reserved_cost, coalesce(p_cost, 0));
   return jsonb_build_object('ok', true, 'proposal_id', v_id);
 end $$;

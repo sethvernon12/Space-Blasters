@@ -135,6 +135,23 @@ try {
   capped.ok === false && capped.error === 'budget_exceeded' ? ok('budget cap: submit fails closed at the daily cap (reserve→…)') : bad(`cap: ${JSON.stringify(capped)}`)
   await q(`update public.grade_cost_ledger set reserved=0 where child_id=$1 and day=current_date`, [BRIELLE])
 
+  // ---- HIGH (SEC-03 fix): the ledger helpers are NOT client-callable (revoked) ----
+  const reserveDenied = await seth.client.rpc('reserve_grade_budget', { p_child: BRIELLE, p_estimate: 500 })
+  const settleDenied = await dana.client.rpc('settle_grade_cost', { p_child: BRIELLE, p_estimate: 0, p_actual: 999 })
+  const ledgerUntouched = Number((await q(`select coalesce(settled,0) s from public.grade_cost_ledger where child_id=$1 and day=current_date`, [BRIELLE]))[0]?.s ?? 0) < 900
+  !!reserveDenied.error && !!settleDenied.error && ledgerUntouched
+    ? ok('HIGH: reserve_grade_budget / settle_grade_cost NOT client-callable (revoked anon+authenticated); ledger untouched') : bad(`ledger helpers exposed: reserve=${JSON.stringify(reserveDenied)} settle=${JSON.stringify(settleDenied)}`)
+
+  // ---- MED (SEC-03 fix): a stale 'claimed' job is reclaimed → proposed exactly once ----
+  const up6 = await seedUpload()
+  const jS = await submit(seth.client, up6, dna(42))
+  await q(`update public.grade_jobs set status='claimed', updated_at=now()-interval '10 minutes' where id=$1`, [jS.job_id]) // simulate a dead worker
+  await runWorker()
+  const jSafter = (await q(`select status from public.grade_jobs where id=$1`, [jS.job_id]))[0].status
+  const propS = (await q(`select count(*)::int n from public.grade_proposals where job_id=$1`, [jS.job_id]))[0].n
+  jSafter === 'proposed' && propS === 1
+    ? ok('MED: a stale claimed job is reclaimed → proposed EXACTLY once (reservation settled, not leaked)') : bad(`reclaim: status=${jSafter} props=${propS}`)
+
   // ---- 8. the shared MOCK adapter makes no external call (unit) ----
   const g = mockGradeAdapter({ problem_dna: dna(42) })
   g.provider === 'mock' && g.read_answer === 42 && typeof g.read_answer === 'number'

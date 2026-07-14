@@ -105,7 +105,7 @@ try {
   await q(`insert into public.pending_children (parent_id, nickname, expires_at) values ($1,'Abandoned', now()-interval '1 hour')`, [uids.seth])
   // an OLD, exported deletion receipt eligible for retention shred
   const oldRid = (await q(`insert into public.deletion_receipts (child_id, parent_id, deleting_actor, disposition, receipt_hash, status, created_at, db_purged_at) values ($1,$2,$3,'{}'::jsonb,'oldh','completed', now()-interval '9 years', now()-interval '9 years') returning id`, [uuid(), uids.seth, uids.seth]))[0].id
-  await q(`insert into public.receipt_exports (receipt_id, sink) values ($1,'external')`, [oldRid])
+  await q(`insert into public.receipt_exports (receipt_id, sink) values ($1,'anchored')`, [oldRid])   // CONFIRMED anchor label (allowlist)
   const wNoRet = await runWorker({}) // retention OFF by default
   const stillThere = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [oldRid]))[0].n === 1
   const wRet = await runWorker({ retention: true }) // opt-in → shred

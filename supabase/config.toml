@@ -457,3 +457,13 @@ verify_jwt = true
 # user-facing: shared-secret auth (fail-closed), same doctrine as maintenance-worker.
 [functions.grade-worker]
 verify_jwt = false
+
+# Phase 5 · Slice 1 — the off-DB deletion-receipt ANCHOR sink. No user JWT — a shared
+# secret (RECEIPT_SINK_SECRET) IS the auth (fail-closed), same doctrine as maintenance-worker.
+[functions.receipt-sink]
+verify_jwt = false
+
+# Phase 5 · Slice 1 — DEV-ONLY stub for the AI-provider purge endpoint (exercises the real
+# fetch/retry path in tests). Never deployed to prod. Shared-secret auth (fail-closed).
+[functions.ai-purge-stub]
+verify_jwt = false

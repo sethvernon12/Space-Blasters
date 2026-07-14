@@ -72,6 +72,7 @@ export const FILES_M3 = [
   'supabase/migrations/0032_grade_assignment_binding.sql',
   'supabase/migrations/0033_grade_solve_hardening.sql',
   'supabase/migrations/0034_grade_benchmark_corpus.sql',
+  'supabase/migrations/0035_receipt_anchor_sink.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

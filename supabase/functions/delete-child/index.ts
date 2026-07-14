@@ -97,12 +97,13 @@ Deno.serve(async (req) => {
     await service.rpc('complete_child_deletion', { p_child_auth_user_id: childAuthUser })
   }
 
-  // off-DB anchor + parent email (fail-closed mock; best-effort — a straggler is
-  // re-exported by the reconcile drain). Only opaque ids/hash leave the system.
+  // off-DB anchor + parent email (best-effort — a transiently-failed export is retried by
+  // the maintenance-worker's re-export drain). Only opaque ids/hash leave the system.
   try {
     const exp = await exportReceipt({ receipt_id: p.receipt_id, receipt_hash: p.receipt_hash, kind: 'child', status })
-    // mark exported ONLY on success — a failed export must not let retention shred
-    // the receipt (retention additionally requires a non-mock sink).
+    // mark exported ONLY on a CONFIRMED anchor — mark_receipt_exported accepts only the
+    // 'anchored' label, and retention shreds only behind that, so a failed/unconfirmed
+    // export leaves the receipt retained (fail-safe), never destroyed.
     if (exp.ok) await service.rpc('mark_receipt_exported', { p_receipt_id: p.receipt_id, p_sink: exp.sink })
     await emailReceipt(parentUid, { receipt_id: p.receipt_id, receipt_hash: p.receipt_hash, kind: 'child', status })
   } catch { /* best-effort */ }

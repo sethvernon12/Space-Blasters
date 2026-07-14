@@ -18,6 +18,7 @@
 //      dormant families is a deliberate later step, never automatic here.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { purgeAiProvider, purgeStorage } from '../_shared/purge-external.ts'
+import { exportReceipt } from '../_shared/notify.ts'
 
 const URL_ = Deno.env.get('SUPABASE_URL')!
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -69,6 +70,24 @@ Deno.serve(async (req) => {
     }
     out.external_purge = { done, failed }
   } catch (e) { out.external_purge = { error: String((e as Error).message) } }
+
+  // 1b. re-export drain — receipts whose off-DB anchor never CONFIRMED (the request-path
+  //     export failed transiently). Without this, a single flaky export would strand a
+  //     receipt in permanent over-retention. exportReceipt is fail-closed + idempotent, so
+  //     re-driving is safe; mark_receipt_exported only accepts a CONFIRMED ('anchored')
+  //     result, so a still-failing sink simply leaves the receipt un-anchored for next pass.
+  try {
+    const { data: awaiting } = await service.rpc('list_receipts_awaiting_export', { p_limit: 100 })
+    let exported = 0, still = 0
+    for (const r of (awaiting ?? [])) {
+      const exp = await exportReceipt({ receipt_id: r.receipt_id, receipt_hash: r.receipt_hash, kind: r.kind, status: r.status })
+      if (exp.ok) {
+        const { data: m } = await service.rpc('mark_receipt_exported', { p_receipt_id: r.receipt_id, p_sink: exp.sink })
+        m?.ok ? exported++ : still++
+      } else still++
+    }
+    out.export_drain = { exported, still }
+  } catch (e) { out.export_drain = { error: String((e as Error).message) } }
 
   // 2a. child GoTrue reconcile — complete ONLY when the user is confirmed gone
   try {

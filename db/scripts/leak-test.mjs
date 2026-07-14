@@ -428,3 +428,16 @@ test('deletion machinery tables are service-only: no authenticated client can re
     });
   }
 });
+
+// The Slice-1 anchor SEAMS are service/definer ONLY. If a client could call
+// mark_receipt_exported it could forge a CONFIRMED-export proof and let retention shred a
+// receipt; list_receipts_awaiting_export would enumerate every family's deletion receipts.
+// EXECUTE is granted to service_role only — both must refuse anon + authenticated callers.
+test('receipt-anchor RPCs are service-only: no client can forge an export proof or list awaiting receipts', async () => {
+  for (const [role, sub] of [['authenticated', FIX.parentA], ['anon', null]]) {
+    await as(role, sub, async (c) => {
+      await rejects(c, `select public.mark_receipt_exported($1, 'anchored')`, [FIX.childA1], /permission denied/i, `${role} mark_receipt_exported`);
+      await rejects(c, `select * from public.list_receipts_awaiting_export(10, interval '0 minutes')`, undefined, /permission denied/i, `${role} list_receipts_awaiting_export`);
+    });
+  }
+});

@@ -74,7 +74,8 @@ Deno.serve(async (req) => {
     await service.rpc('complete_account_deletion', { p_parent_auth_user_id: parentUid })
   }
 
-  // off-DB anchor + parent email (fail-closed mock; best-effort)
+  // off-DB anchor + parent email (best-effort — a transiently-failed export is retried by
+  // the maintenance-worker's re-export drain; mark accepts only a CONFIRMED 'anchored' sink)
   try {
     const exp = await exportReceipt({ receipt_id: p.account_receipt_id, receipt_hash: p.receipt_hash, kind: 'account', status })
     if (exp.ok) await service.rpc('mark_receipt_exported', { p_receipt_id: p.account_receipt_id, p_sink: exp.sink })

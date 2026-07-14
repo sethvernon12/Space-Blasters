@@ -6,7 +6,8 @@
 //   2. ONE PATH: delete-account routes every child through the SAME purge_child
 //      kernel — children purged, immutable account receipt, child+parent GoTrue
 //      users deleted, other family untouched.
-//   3. EXPORT hook: a delete-child marks the receipt exported (off-DB anchor).
+//   3. EXPORT hook: under mock (no sink) delete-child/account do NOT mark an anchor —
+//      fail-safe; a receipt shreds only behind a CONFIRMED 'anchored' export (rm42).
 //   4. DORMANT: list_dormant_families identifies lapsed accounts.
 //   5. PITR replay: purge_child is idempotent for a surviving receipt and re-purges
 //      a resurrected (no-receipt) child — safe to replay from the off-DB log.
@@ -60,8 +61,10 @@ try {
   // client-writable). Theo stays live through this step (deleted later in step 3).
   const oldRef = (await q(`insert into public.consent_ledger (parent_id, child_id, action, method, policy_version, created_at) values ($1,$2,'grant','other_vpc','v1', now()-interval '9 years') returning id`, [uids.seth, CID.Theo]))[0].id
   await q(`update public.children set consent_id=$1 where id=$2`, [oldRef, CID.Theo])
-  // a past-window receipt: NOT exported (survive) vs MOCK export (survive — mock
-  // doesn't count) vs REAL export (shred). Retention requires a non-mock sink.
+  // a past-window receipt shreds ONLY behind a CONFIRMED anchor (sink='anchored', the
+  // ALLOWLIST). Everything else is RETAINED: not exported, a 'mock', a null-coalesced
+  // 'unknown', or an old-style 'external' label can NEVER satisfy shred (D2 — the gate is
+  // an allowlist, not the old sink<>'mock' blacklist).
   const mkReceipt = async (cid, sink) => {
     const rid = (await q(`insert into public.deletion_receipts (child_id, parent_id, deleting_actor, disposition, receipt_hash, status, created_at, db_purged_at)
       values ($1,$2,$3,'{}'::jsonb, $4, 'completed', now()-interval '9 years', now()-interval '9 years') returning id`, [cid, uids.seth, uids.seth, 'h_' + cid.slice(0, 8)]))[0].id
@@ -70,17 +73,21 @@ try {
   }
   const rUnexported = await mkReceipt(uuid(), null)
   const rMock = await mkReceipt(uuid(), 'mock')
-  const rExported = await mkReceipt(uuid(), 'external')
+  const rUnknown = await mkReceipt(uuid(), 'unknown')
+  const rExternal = await mkReceipt(uuid(), 'external')
+  const rAnchored = await mkReceipt(uuid(), 'anchored')
   const shred = (await q(`select public.expire_retained_evidence(now()) r`))[0].r.shredded
   const unrefGone = (await q(`select count(*)::int n from public.consent_ledger where id=$1`, [oldUnref]))[0].n === 0
   const recentKept = (await q(`select count(*)::int n from public.consent_ledger where id=$1`, [recentCL]))[0].n === 1
   const refKept = (await q(`select count(*)::int n from public.consent_ledger where id=$1`, [oldRef]))[0].n === 1
   const unexpKept = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rUnexported]))[0].n === 1
   const mockKept = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rMock]))[0].n === 1
-  const expShredded = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rExported]))[0].n === 0
-  unrefGone && recentKept && refKept && unexpKept && mockKept && expShredded
-    ? ok(`shred: old unreferenced gone, recent kept, live-child consent protected, receipt shredded ONLY after a REAL (non-mock) export (${JSON.stringify(shred)})`)
-    : bad(`retention: unrefGone=${unrefGone} recentKept=${recentKept} refKept=${refKept} unexpKept=${unexpKept} mockKept=${mockKept} expShredded=${expShredded}`)
+  const unknownKept = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rUnknown]))[0].n === 1
+  const externalKept = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rExternal]))[0].n === 1
+  const anchoredShredded = (await q(`select count(*)::int n from public.deletion_receipts where id=$1`, [rAnchored]))[0].n === 0
+  unrefGone && recentKept && refKept && unexpKept && mockKept && unknownKept && externalKept && anchoredShredded
+    ? ok(`shred: old unreferenced gone, recent kept, live-child consent protected; a receipt shreds ONLY behind a CONFIRMED 'anchored' export — not-exported/mock/unknown/external all RETAINED (allowlist, ${JSON.stringify(shred)})`)
+    : bad(`retention: unrefGone=${unrefGone} recentKept=${recentKept} refKept=${refKept} unexpKept=${unexpKept} mockKept=${mockKept} unknownKept=${unknownKept} externalKept=${externalKept} anchoredShredded=${anchoredShredded}`)
 
   // ---- 2. ONE PATH: delete-account (Dana) routes Wren through purge_child ----
   console.log('account deletion through the kernel:')
@@ -91,11 +98,14 @@ try {
   const acctReceipt = (await q(`select status, child_count, (r::text ilike '%Wren%') leak from public.account_deletion_receipts r where parent_id=$1`, [uids.dana]))[0]
   const wrenUser = await admin.auth.admin.getUserById(uids.wren)
   const danaUser = await admin.auth.admin.getUserById(uids.dana)
-  const exported = (await q(`select count(*)::int n from public.receipt_exports re join public.account_deletion_receipts a on a.id=re.receipt_id where a.parent_id=$1`, [uids.dana]))[0].n === 1
+  // under MOCK (no RECEIPT_EXPORT_SINK), exportReceipt returns unconfirmed → the account
+  // deletion does NOT mark an anchor. Fail-safe: an unconfirmed export ⇒ receipt retained,
+  // never shreddable. (The CONFIRMED path is proven with the real receipt-sink in rm42.)
+  const notMarkedUnderMock = (await q(`select count(*)::int n from public.receipt_exports re join public.account_deletion_receipts a on a.id=re.receipt_id where a.parent_id=$1`, [uids.dana]))[0].n === 0
   const alphaIntact = (await q(`select count(*)::int n from public.children where parent_id=$1`, [uids.seth]))[0].n === 2
-  del.status === 200 && del.body?.ok && wrenGone && danaKids && acctReceipt?.status === 'completed' && acctReceipt?.child_count === 1 && !acctReceipt?.leak && !wrenUser.data?.user && !danaUser.data?.user && exported && alphaIntact
-    ? ok('delete-account → Wren purged via kernel, opaque account receipt, child+parent GoTrue users deleted, receipt exported, Alpha untouched')
-    : bad(`account: ${JSON.stringify({ st: del.status, wrenGone, danaKids, acctReceipt, wrenUser: !!wrenUser.data?.user, danaUser: !!danaUser.data?.user, exported, alphaIntact })}`)
+  del.status === 200 && del.body?.ok && wrenGone && danaKids && acctReceipt?.status === 'completed' && acctReceipt?.child_count === 1 && !acctReceipt?.leak && !wrenUser.data?.user && !danaUser.data?.user && notMarkedUnderMock && alphaIntact
+    ? ok('delete-account → Wren purged via kernel, opaque account receipt, child+parent GoTrue users deleted; NO anchor marked under mock (fail-safe), Alpha untouched')
+    : bad(`account: ${JSON.stringify({ st: del.status, wrenGone, danaKids, acctReceipt, wrenUser: !!wrenUser.data?.user, danaUser: !!danaUser.data?.user, notMarkedUnderMock, alphaIntact })}`)
 
   // ---- 2b. HIGH-1: a legal hold on ONE child blocks the WHOLE account delete,
   //          destroying NOTHING (no committed partial purge) ----
@@ -110,12 +120,14 @@ try {
     : bad(`legal hold: status=${held.status} bothAlive=${bothAlive} noAcctReceipt=${noAcctReceipt}`)
   await q(`update public.legal_holds set released_at=now() where child_id=$1`, [CID.Theo])
 
-  // ---- 3. EXPORT hook on delete-child ----
-  console.log('delete-child export hook:')
+  // ---- 3. EXPORT hook on delete-child (fail-safe under mock) ----
+  console.log('delete-child export hook (mock → no false anchor):')
   const sethFresh = await signInAs(cfg, A.parent.email) // fresh token so step-up passes
   const dc = await invoke(sethFresh.session.access_token, 'delete-child', { childId: CID.Theo })
-  const childExported = (await q(`select count(*)::int n from public.receipt_exports where receipt_id=$1`, [dc.body?.receipt_id]))[0].n === 1
-  dc.status === 200 && childExported ? ok('a delete-child marks its receipt exported (off-DB anchor fired)') : bad(`export hook: ${JSON.stringify({ st: dc.status, childExported })}`)
+  // under mock the anchor is NOT confirmed → NOT marked; the receipt stays retained until
+  // a real anchor confirms (the re-export drain / a real sink). Proven end-to-end in rm42.
+  const childNotMarkedUnderMock = (await q(`select count(*)::int n from public.receipt_exports where receipt_id=$1`, [dc.body?.receipt_id]))[0].n === 0
+  dc.status === 200 && childNotMarkedUnderMock ? ok('delete-child under mock does NOT mark an anchor (fail-safe: unconfirmed export ⇒ receipt retained, not shreddable)') : bad(`export hook: ${JSON.stringify({ st: dc.status, childNotMarkedUnderMock })}`)
 
   // ---- 4. DORMANT identification ----
   console.log('dormant-family identification:')

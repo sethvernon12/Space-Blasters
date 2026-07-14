@@ -47,6 +47,10 @@ activeReader({ candidate: 'cnn', on_real_set: true, evidence: { ...fullMatrix, m
 activeReader({ candidate: 'cnn', on_real_set: true, evidence: fullMatrix }) === 'cnn' && evidenceClears(fullMatrix) && !legClears(failingLeg)
   ? ok('gate: a REAL-set record clearing EVERY device leg promotes the candidate (the only path)') : bad('real full-clear did not promote')
 
+// impossible / out-of-range metrics do not clear (defense-in-depth on the gate)
+!legClears({ exact_match: 2, high_conf_exact_match: 2 }) && !legClears({ exact_match: 0.99, high_conf_exact_match: 1.5 })
+  ? ok('gate: impossible >1 metrics are rejected (metrics must be valid probabilities — no fabricated-evidence bypass)') : bad('out-of-range metric cleared the bar')
+
 // fully reversible
 activeReader(null) === READER_DEFAULT
   ? ok('REVERSIBLE: revoking the record (null) reverts to the deterministic default') : bad('not reversible')

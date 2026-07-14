@@ -13,6 +13,7 @@ export const PROMOTION_BAR = { exactMatch: 0.98, highConfExactMatch: 0.995, maxL
 export function legClears(result, bar = PROMOTION_BAR) {
   if (!result || typeof result.exact_match !== 'number') return false
   const hi = typeof result.high_conf_exact_match === 'number' ? result.high_conf_exact_match : 0
+  if (!(result.exact_match >= 0 && result.exact_match <= 1 && hi >= 0 && hi <= 1)) return false // metrics must be valid probabilities (reject NaN / >1 / <0)
   const leaked = 1 - hi
   return result.exact_match >= bar.exactMatch && hi >= bar.highConfExactMatch && leaked <= bar.maxLeakedErrorRate
 }

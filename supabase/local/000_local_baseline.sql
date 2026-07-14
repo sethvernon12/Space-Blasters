@@ -85,6 +85,18 @@ create table if not exists storage.objects (
   created_at timestamptz default now()
 );
 
+-- ---- Mirror of the Supabase-provided `supabase_realtime` publication (EPHEMERAL ONLY) ----
+-- The full local stack provides this publication (platform-created, initially empty); migrations
+-- add specific tables to it (e.g. 0028 → grade_proposals). Creating it here lets the isolation
+-- matrix enforce "every live-streamed table FORCES RLS" — the Realtime delivery isolation invariant
+-- (Postgres Changes only delivers rows a subscriber can SELECT; a client-side channel filter is not
+-- a security boundary). Without this mirror, 0028's guarded ALTER silently no-ops (undefined_object).
+do $$ begin
+  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    create publication supabase_realtime;   -- empty; migrations add tables explicitly
+  end if;
+end $$;
+
 -- ---- Mirror of the EXISTING production players table (structure only) ----
 -- Production: players + SECURITY DEFINER RPCs signup_or_login / submit_score /
 -- get_leaderboard, callable with the publishable key. Do not modify in prod.

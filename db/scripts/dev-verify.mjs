@@ -47,6 +47,38 @@ const READ_TABLES = [['children', 'id'], ['sessions', 'child_id'], ['attempts', 
 const FAM = { seth: 'A', brielle: 'A', theo: 'A', rose: 'A', obs: 'A', dana: 'B', wren: 'B' }
 const KIDFAM = { Brielle: 'A', Theo: 'A', Wren: 'B' }
 
+// ---- 0. REALTIME publication invariant — against the REAL promoted publication ----
+// The ephemeral leak-test can only see the migration-defined publication; a table enabled
+// for Realtime OUT-OF-BAND (Supabase dashboard toggle / FOR ALL TABLES) is invisible to it.
+// Here we assert the ACTUAL DEV supabase_realtime: grade_proposals streams, EVERY published
+// table FORCES RLS, and none has a permissive USING(true) authenticated SELECT policy — so
+// nothing streams live changes without a real per-subscriber isolation boundary (C-obs2).
+console.log('realtime publication invariant (real DEV publication):')
+{
+  const { Client } = (await import('pg')).default
+  const c = new Client({ connectionString: cfg.dbUrl }); await c.connect()
+  try {
+    const pub = (await c.query(`
+      select t.schemaname, t.tablename, cl.relrowsecurity rls, cl.relforcerowsecurity force
+        from pg_publication_tables t
+        join pg_namespace n on n.nspname = t.schemaname
+        join pg_class cl on cl.relname = t.tablename and cl.relnamespace = n.oid
+       where t.pubname = 'supabase_realtime'`)).rows
+    const gp = pub.find((r) => r.schemaname === 'public' && r.tablename === 'grade_proposals')
+    const unguarded = pub.filter((r) => !(r.rls && r.force))
+    const permissive = (await c.query(`
+      select p.schemaname, p.tablename, p.policyname
+        from pg_policies p
+        join pg_publication_tables t on t.schemaname = p.schemaname and t.tablename = p.tablename
+       where t.pubname = 'supabase_realtime' and p.cmd in ('SELECT', 'ALL')
+         and ('authenticated' = any(p.roles) or 'public' = any(p.roles))
+         and coalesce(p.qual, 'true') = 'true'`)).rows
+    gp && unguarded.length === 0 && permissive.length === 0
+      ? ok(`realtime publication: grade_proposals streams; all ${pub.length} published table(s) FORCE RLS; no permissive SELECT policy`)
+      : bad(`realtime publication: grade_proposals=${!!gp} unguarded=${JSON.stringify(unguarded)} permissive=${JSON.stringify(permissive)}`)
+  } finally { await c.end() }
+}
+
 // ---- 1. CROSS-FAMILY ISOLATION SWEEP (the gate) ----
 console.log('cross-family isolation sweep:')
 {

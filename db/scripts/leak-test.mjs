@@ -382,6 +382,74 @@ test('grading tables (5a): rows exist but cross-family reads zero; ledger is ser
   });
 });
 
+// Phase 5 · Slice 2 (C-obs2): REALTIME CHANNEL ISOLATION. The hub subscribes to Postgres
+// Changes on grade_proposals (GradeReview.tsx) — the ONLY table in the supabase_realtime
+// publication. Realtime delivers a change to a subscriber ONLY if that subscriber can SELECT
+// the row under RLS; the client-side channel `filter` (child_id=eq.X) is NOT a security
+// boundary (a malicious client can subscribe filtered to any child). So live-subscription
+// isolation reduces to two invariants, both asserted here (the live-stack end-to-end
+// subscription proof is rm43-realtime-isolation-e2e.mjs):
+//   (1) every live-streamed table FORCES RLS — nothing streams unguarded; and
+//   (2) grade_proposals' per-subscriber RLS denies the subject child (SAF), a sibling, and
+//       another family, while a reviewer (parent/tutor) IS delivered the row.
+test('Realtime channel isolation (C-obs2): only RLS-forced tables stream, and only a reviewer receives a child’s live grade_proposals', async () => {
+  // (1) publication invariant — every table that streams live changes forces RLS
+  const pub = (await db.client.query(`
+    select t.schemaname, t.tablename, c.relrowsecurity, c.relforcerowsecurity
+      from pg_publication_tables t
+      join pg_namespace n on n.nspname = t.schemaname
+      join pg_class c on c.relname = t.tablename and c.relnamespace = n.oid
+     where t.pubname = 'supabase_realtime'`)).rows;
+  assert.ok(pub.some((r) => r.schemaname === 'public' && r.tablename === 'grade_proposals'),
+    'grade_proposals is in supabase_realtime (the probe is live)');
+  for (const r of pub) {
+    assert.ok(r.relrowsecurity && r.relforcerowsecurity,
+      `live-streamed table ${r.schemaname}.${r.tablename} must FORCE RLS (no table streams changes without per-subscriber RLS)`);
+  }
+  // FORCE RLS only guarantees the policy APPLIES — not that it is restrictive. A published
+  // table with a permissive USING(true) authenticated/public SELECT policy would pass the
+  // flags check yet fan every row out to every subscriber, so reject that too.
+  const permissive = (await db.client.query(`
+    select p.schemaname, p.tablename, p.policyname
+      from pg_policies p
+      join pg_publication_tables t on t.schemaname = p.schemaname and t.tablename = p.tablename
+     where t.pubname = 'supabase_realtime' and p.cmd in ('SELECT', 'ALL')
+       and ('authenticated' = any(p.roles) or 'public' = any(p.roles))
+       and coalesce(p.qual, 'true') = 'true'`)).rows;
+  assert.equal(permissive.length, 0,
+    `a live-streamed table has a permissive USING(true) SELECT policy — would fan out cross-family: ${JSON.stringify(permissive)}`);
+
+  // (2) delivery isolation — seed a proposal for child A1, then check per-subscriber SELECT
+  const up = (await db.client.query(
+    `insert into public.uploads (child_id, uploaded_by, uploader_role, storage_path, content_type, byte_size, exif_stripped, status)
+     values ($1::uuid,$1::uuid,'parent',$2,'image/jpeg',1,true,'inbox') returning id`, [FIX.childA1, `${FIX.childA1}/rt.jpg`])).rows[0].id;
+  const job = (await db.client.query(
+    `insert into public.grade_jobs (child_id, upload_id, skill_id, problem_dna, client_job_id)
+     values ($1,$2,'mult2','{}'::jsonb, gen_random_uuid()) returning id`, [FIX.childA1, up])).rows[0].id;
+  await db.client.query(
+    `insert into public.grade_proposals (job_id, child_id, upload_id, skill_id, read_answer, provider)
+     values ($1,$2,$3,'mult2',42,'mock')`, [job, FIX.childA1, up]);
+
+  // POSITIVE: a reviewer (parent A) WOULD be delivered A1's live proposal(s) (so the zeros are
+  // isolation, not an empty table). >=1 because earlier tests also commit A1 proposals.
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA1]) >= 1,
+      'reviewer parent is delivered own child’s proposal');
+  });
+  // SUBJECT child (SAF) + cross-CHILD: A1's own subscription receives NOTHING about itself or a sibling
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA1]), 0,
+      'subject child receives none of its own live proposals');
+    assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA2]), 0,
+      'child cannot receive a sibling’s live proposals');
+  });
+  // cross-FAMILY: parent B is delivered NOTHING about A1, even subscribing filtered to A1's id
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA1]), 0,
+      'another family receives nothing, regardless of the channel filter');
+  });
+});
+
 // Phase 4/5 · the deletion-covenant + moderation records are ADULT-keyed (parent_id = auth.uid()).
 // A parent sees their OWN standing/receipts (transparency) but NEVER another family's — and can
 // never forge or mutate them (the deleters/definer functions are the only writers).

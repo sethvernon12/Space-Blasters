@@ -450,6 +450,39 @@ test('Realtime channel isolation (C-obs2): only RLS-forced tables stream, and on
   });
 });
 
+// Phase 5 · Slice 3 (D-LOW1): the adult-keyed helper functions must not let one signed-in
+// adult probe ANOTHER adult's standing/subject/churn/deletion. The definer-only helpers are
+// revoked from `authenticated` (0036); actor_is_deleted (needed by the zombie-write RLS
+// policies) is pinned to the caller so a cross-uid probe reveals nothing.
+test('adult-keyed helpers do not leak another adult’s standing (D-LOW1)', async () => {
+  // a "deleted actor": a deletion receipt carrying a known child_auth_user_id. Use a NEUTRAL
+  // parent_id (not a fixture parent) so this seed can't perturb any parent-scoped count in
+  // another test — actor_is_deleted keys only on child_auth_user_id.
+  const deletedUid = '0000dead-0000-4000-8000-000000000001';
+  const neutralParent = '0000beef-0000-4000-8000-000000000001';
+  await db.client.query(
+    `insert into public.deletion_receipts (child_id, parent_id, child_auth_user_id, deleting_actor, disposition, receipt_hash)
+     values (gen_random_uuid(), $1, $2, $1, '{}'::jsonb, 'dlow1-hash')`, [neutralParent, deletedUid]);
+
+  // an authenticated adult (parent B) cannot call the definer-only helpers AT ALL — a
+  // cross-parent probe of family A returns nothing (permission denied), not a value.
+  await as('authenticated', FIX.parentB, async (c) => {
+    await rejects(c, `select public.family_muted($1)`, [FIX.parentA], /permission denied/i, 'family_muted');
+    await rejects(c, `select public.family_of($1)`, [FIX.parentA], /permission denied/i, 'family_of');
+    await rejects(c, `select public.family_child_deletes_30d($1)`, [FIX.parentA], /permission denied/i, 'family_child_deletes_30d');
+    await rejects(c, `select public.stable_subject($1)`, [FIX.parentA], /permission denied/i, 'stable_subject');
+    // actor_is_deleted stays callable (the RLS zombie-guard needs it) but a CROSS-uid probe
+    // reveals nothing — parent B learns nothing about the deleted actor.
+    assert.equal((await c.query(`select public.actor_is_deleted($1) d`, [deletedUid])).rows[0].d, false,
+      'cross-actor deletion probe returns false (pinned)');
+  });
+  // the pin still reports the CALLER's OWN deletion status, so the zombie-write guard fires
+  await as('authenticated', deletedUid, async (c) => {
+    assert.equal((await c.query(`select public.actor_is_deleted($1) d`, [deletedUid])).rows[0].d, true,
+      'own deletion tombstone is still reported to self');
+  });
+});
+
 // Phase 4/5 · the deletion-covenant + moderation records are ADULT-keyed (parent_id = auth.uid()).
 // A parent sees their OWN standing/receipts (transparency) but NEVER another family's — and can
 // never forge or mutate them (the deleters/definer functions are the only writers).

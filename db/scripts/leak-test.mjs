@@ -352,10 +352,21 @@ test('grading tables (5a): rows exist but cross-family reads zero; ledger is ser
   await db.client.query(`insert into public.grade_cost_ledger (child_id, reserved) values ($1, 1)`, [FIX.childA1]);
 
   // the rows really exist (queried as the table owner — proves the zero below is isolation, not emptiness)
+  assert.equal((await db.client.query('select count(*)::int n from public.uploads where child_id = $1', [FIX.childA1])).rows[0].n, 1);
   assert.equal((await db.client.query('select count(*)::int n from public.grade_jobs where child_id = $1', [FIX.childA1])).rows[0].n, 1);
   assert.equal((await db.client.query('select count(*)::int n from public.grade_proposals where child_id = $1', [FIX.childA1])).rows[0].n, 1);
-  // cross-FAMILY: parent B sees zero grade rows; the cost ledger has no client grant at all
+  // POSITIVE control: the consented parent CAN see their own child's upload (so the cross-family
+  // zeros below are proven isolation, not an empty table) — and STILL cannot write it (RPC-only path)
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.uploads where child_id = $1', [FIX.childA1]), 1, 'consented parent reads own child upload');
+    await rejects(c, `insert into public.uploads (child_id, uploaded_by, uploader_role, storage_path, content_type, byte_size, exif_stripped, status)
+         values ($1,$1,'parent',$2,'image/jpeg',1,true,'inbox')`, [FIX.childA1, `${FIX.childA1}/forge.jpg`], /permission denied/i, 'client insert upload');
+    await rejects(c, `update public.uploads set status = 'graded' where child_id = $1`, [FIX.childA1], /permission denied/i, 'client update upload');
+    await rejects(c, `delete from public.uploads where child_id = $1`, [FIX.childA1], /permission denied/i, 'client delete upload');
+  });
+  // cross-FAMILY: parent B sees zero grade rows AND zero uploads (photos of A1's work); ledger has no client grant
   await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.uploads where child_id = $1', [FIX.childA1]), 0);
     assert.equal(await count(c, 'select 1 from public.grade_jobs where child_id = $1', [FIX.childA1]), 0);
     assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA1]), 0);
     await rejects(c, 'select 1 from public.grade_cost_ledger where child_id = $1', [FIX.childA1], /permission denied/i);
@@ -369,4 +380,51 @@ test('grading tables (5a): rows exist but cross-family reads zero; ledger is ser
     assert.equal(await count(c, 'select 1 from public.grade_jobs where child_id = $1', [FIX.childA1]), 0);
     assert.equal(await count(c, 'select 1 from public.grade_proposals where child_id = $1', [FIX.childA1]), 0);
   });
+});
+
+// Phase 4/5 · the deletion-covenant + moderation records are ADULT-keyed (parent_id = auth.uid()).
+// A parent sees their OWN standing/receipts (transparency) but NEVER another family's — and can
+// never forge or mutate them (the deleters/definer functions are the only writers).
+test('covenant records (receipts, family standing): own-family read, cross-family zero, no client writes', async () => {
+  // seed (committed, as owner) parent A's covenant rows — the shapes the deleters/moderation write
+  await db.client.query(
+    `insert into public.deletion_receipts (child_id, parent_id, deleting_actor, disposition, receipt_hash)
+     values ($1,$2,$2,'{"deleted":{}}'::jsonb,'seed-hash-a1')`, [FIX.childA2, FIX.parentA]);
+  await db.client.query(
+    `insert into public.account_deletion_receipts (parent_id, deleting_actor, child_count, disposition, receipt_hash)
+     values ($1,$1,0,'{"deleted":{}}'::jsonb,'seed-acct-hash-a')`, [FIX.parentA]);
+  await db.client.query(
+    `insert into public.family_standing (parent_id, flags, standing) values ($1, 1, 'good')`, [FIX.parentA]);
+
+  // POSITIVE control: parent A sees exactly their own covenant rows
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.deletion_receipts where parent_id = $1', [FIX.parentA]), 1);
+    assert.equal(await count(c, 'select 1 from public.account_deletion_receipts where parent_id = $1', [FIX.parentA]), 1);
+    assert.equal(await count(c, 'select 1 from public.family_standing where parent_id = $1', [FIX.parentA]), 1);
+    // and cannot forge/mutate any of them (immutable, definer-written)
+    await rejects(c, `insert into public.deletion_receipts (child_id, parent_id, deleting_actor, disposition, receipt_hash)
+         values ($1,$2,$2,'{}'::jsonb,'forge')`, [FIX.childA1, FIX.parentA], /permission denied/i, 'forge deletion receipt');
+    await rejects(c, `update public.family_standing set standing = 'good', flags = 0 where parent_id = $1`, [FIX.parentA], /permission denied/i, 'self-clear standing');
+    await rejects(c, `insert into public.family_standing (parent_id, standing) values ($1,'good')`, [FIX.parentB], /permission denied/i, 'forge standing');
+  });
+  // cross-FAMILY: parent B sees none of family A's covenant rows
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.deletion_receipts where parent_id = $1', [FIX.parentA]), 0);
+    assert.equal(await count(c, 'select 1 from public.account_deletion_receipts where parent_id = $1', [FIX.parentA]), 0);
+    assert.equal(await count(c, 'select 1 from public.family_standing where parent_id = $1', [FIX.parentA]), 0);
+  });
+});
+
+// The deletion machinery + policy tables are SERVICE/DEFINER ONLY: no authenticated grant at all.
+// A leak here would expose legal holds, other families' purge queue, or let a client tamper with
+// retention/export state — so every one must refuse a direct authenticated read.
+test('deletion machinery tables are service-only: no authenticated client can read them', async () => {
+  for (const t of ['legal_holds', 'deletion_attempts', 'retention_policy', 'receipt_exports', 'external_purge_queue']) {
+    await as('authenticated', FIX.parentA, async (c) => {
+      await rejects(c, `select 1 from public.${t} limit 1`, undefined, /permission denied/i, `authenticated read ${t}`);
+    });
+    await as('anon', null, async (c) => {
+      await rejects(c, `select 1 from public.${t} limit 1`, undefined, /permission denied/i, `anon read ${t}`);
+    });
+  }
 });

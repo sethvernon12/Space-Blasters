@@ -78,6 +78,8 @@ export const FILES_M3 = [
   'supabase/migrations/0038_grade_proposal_consent.sql',
   'supabase/migrations/0039_group_rules.sql',
   'supabase/migrations/0040_create_group.sql',
+  'supabase/migrations/0041_group_roster_visibility.sql',
+  'supabase/migrations/0042_academy_staff_discovery.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

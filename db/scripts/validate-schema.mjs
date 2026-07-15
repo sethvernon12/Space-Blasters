@@ -60,9 +60,11 @@ if (!process.argv.includes('--static')) {
                         'tutor_grants', 'rpc_rate_limits',
                         // group engine (0007/0008) — S0 gate: every group table must be RLS-forced
                         'groups', 'memberships', 'channels', 'channel_members', 'events',
-                        'suppressions', 'derivation_rules', 'derivation_outbox'];
+                        'suppressions', 'derivation_rules', 'derivation_outbox',
+                        // S3b (0042): the academy staff background-check clearance surface
+                        'academy_staff_clearances'];
     // deny-by-default tables that intentionally have ZERO policies (definer/service only)
-    const NO_CLIENT_TABLES = ['rpc_rate_limits', 'derivation_outbox'];
+    const NO_CLIENT_TABLES = ['rpc_rate_limits', 'derivation_outbox', 'academy_staff_clearances'];
 
     const rls = await db.client.query(
       `select relname, relrowsecurity, relforcerowsecurity

@@ -249,6 +249,43 @@ console.log('C2 — in-group cross-family adult co-member sees no child-subject 
     : bad(`C2 adult co-member: member=${isMember} childSubj=${childSubjectVisible} child=${seesBrielleChild} attempts=${seesBrielleAttempts} jr=${JSON.stringify(jr)}`)
 }
 
+// ---- S3a/S3b companions: roster visibility + academy staff discovery through the real client path ----
+console.log('S3 (leader sees roster; co-member narrowed; academy staff discover kids by name, 0 work):')
+{
+  // S3a: the LEADER (Seth = created_by of Math Class) reads its child roster; Dana (in-group adult
+  // co-member from C2) sees her own adult row but ZERO child rows (narrowed — not the leader/guardian).
+  const sethKids = (await S.seth.client.from('memberships').select('member_child_id').eq('group_id', mathClass).not('member_child_id', 'is', null)).data ?? []
+  const danaAdults = (await S.dana.client.from('memberships').select('member_actor_id').eq('group_id', mathClass).not('member_actor_id', 'is', null)).data ?? []
+  const danaKids = (await S.dana.client.from('memberships').select('member_child_id').eq('group_id', mathClass).not('member_child_id', 'is', null)).data ?? []
+  sethKids.length >= 1 && danaAdults.length >= 1 && danaKids.length === 0
+    ? ok('S3a: the leader (Seth) reads the child roster; a co-member adult (Dana) sees her own adult row but 0 child rows (narrowed)')
+    : bad(`S3a roster: sethKids=${sethKids.length} danaAdults=${danaAdults.length} danaKids=${danaKids.length}`)
+
+  // S3b: enroll Seth's family in a fresh academy; Rose is academy staff. The background-check gate,
+  // the discovery-by-name, and the border (a non-staff parent sees nothing) all through the client.
+  const acad = '0000d1d1-0000-4000-8000-0000000000a1'
+  const director = '0000d1d1-0000-4000-8000-0000000000d1'
+  await q(`insert into public.groups (id, purpose, name, created_by) values ($1,'academy','RM07 Academy',$2)`, [acad, director])
+  await q(`insert into public.groups (purpose, name, arena, org_id, created_by) values ('family','Seth Fam','academy',$1,$2)`, [acad, uids.seth])
+  await q(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true)`, [acad, uids.rose])
+  const beforeClear = (await S.rose.client.rpc('academy_child_roster', { p_academy_group_id: acad })).data ?? []
+  await q(`insert into public.academy_staff_clearances (academy_group_id, actor_id, completed_at) values ($1,$2, now())`, [acad, uids.rose])
+  const roseRoster = (await S.rose.client.rpc('academy_child_roster', { p_academy_group_id: acad })).data ?? []
+  const danaRoster = (await S.dana.client.rpc('academy_child_roster', { p_academy_group_id: acad })).data ?? []
+  const names = roseRoster.map((r) => r.nickname)
+  beforeClear.length === 0 && names.includes('Brielle') && names.includes('Theo') && (danaRoster?.length ?? 0) === 0
+    ? ok('S3b: role-only staff → empty; after a background check Rose sees Brielle+Theo by name; a non-staff parent (Dana) sees 0 (gate + border)')
+    : bad(`S3b discovery: before=${beforeClear.length} names=${JSON.stringify(names)} dana=${danaRoster?.length}`)
+
+  // S3b crown jewel e2e: Rose discovers Theo by NAME but holds NO grant for Theo → 0 of Theo's child
+  // row/work (name ≠ work; can_view_child stays pristine). Rose HAS a grant for Brielle, so use Theo.
+  const roseTheoChild = (await S.rose.client.from('children').select('id').eq('id', CID.Theo)).data ?? []
+  const roseTheoAttempts = (await S.rose.client.from('attempts').select('id').eq('child_id', CID.Theo)).data ?? []
+  names.includes('Theo') && roseTheoChild.length === 0 && roseTheoAttempts.length === 0
+    ? ok('S3b crown jewel: Rose discovers Theo by name yet reads 0 of Theo’s child row/work (no grant → can_view_child pristine)')
+    : bad(`S3b crown jewel: nameTheo=${names.includes('Theo')} child=${roseTheoChild.length} attempts=${roseTheoAttempts.length}`)
+}
+
 await db.end()
 console.log(fails ? `\n=== RM-07: ${fails} FAIL ===` : '\n=== RM-07: ALL PASS ===')
 process.exit(fails ? 1 : 0)

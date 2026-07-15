@@ -737,3 +737,202 @@ test('receipt-anchor RPCs are service-only: no client can forge an export proof 
     });
   }
 });
+
+// ============================================================================
+// GROUP ENGINE · S3 — ROSTER VISIBILITY. Purpose-dispatched roster reads (0041)
+// + academy staff discovery (0042). Fixed synthetic uids so the committed seeds are
+// idempotent; these tests run LAST (appended) so their committed academy fixtures
+// never perturb the earlier isolation probes.
+// ============================================================================
+const S3 = {
+  academyA:       '0000acad-0000-4000-8000-0000000000a1',
+  director:       '0000acad-0000-4000-8000-0000000000d1',
+  staffCleared:   '0000acad-0000-4000-8000-0000000000c1',   // academy tutor WITH a completed background check
+  staffUncleared: '0000acad-0000-4000-8000-0000000000c2',   // academy tutor, role only, NO clearance
+  academyB:       '0000acad-0000-4000-8000-0000000000b1',
+  directorB:      '0000acad-0000-4000-8000-0000000000b2',
+  staffB:         '0000acad-0000-4000-8000-0000000000b3',   // academy B staff (cross-academy foil)
+  famA:           '0000fa00-0000-4000-8000-0000000000a1',
+  famB:           '0000fa00-0000-4000-8000-0000000000b1',
+  classGrp:       '0000c1a5-0000-4000-8000-000000000001',   // a class with a tutor-leader + 2 kids (diff families)
+  classLeader:    '0000c1a5-0000-4000-8000-0000000000c1',
+  standaloneGrp:  '0000a10e-0000-4000-8000-000000000001',   // an independent (non-academy) class
+  standaloneLeader:'0000a10e-0000-4000-8000-0000000000c1',
+};
+
+// Idempotent, committed seed of the academy/class/standalone fixtures (on-conflict-do-nothing so
+// both S3 tests can call it). childA1 (parentA) + childB1 (parentB) are consented; childA3 is not.
+async function seedAcademy(client) {
+  await client.query(`insert into public.groups (id, purpose, name, created_by) values
+     ($1,'academy','Academy A',$2), ($3,'academy','Academy B',$4) on conflict (id) do nothing`,
+     [S3.academyA, S3.director, S3.academyB, S3.directorB]);
+  // enrolled family groups for parentA + parentB in Academy A (arena='academy', org_id=academyA)
+  await client.query(`insert into public.groups (id, purpose, name, arena, org_id, created_by) values
+     ($1,'family','Fam A','academy',$2,$3), ($4,'family','Fam B','academy',$2,$5) on conflict (id) do nothing`,
+     [S3.famA, S3.academyA, FIX.parentA, S3.famB, FIX.parentB]);
+  // academy memberships: parents (role='parent'); staff (role='tutor'); B has its own staff
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values
+     ($1,$2,'parent',true), ($1,$3,'parent',true), ($1,$4,'tutor',true), ($1,$5,'tutor',true),
+     ($6,$7,'tutor',true) on conflict do nothing`,
+     [S3.academyA, FIX.parentA, FIX.parentB, S3.staffCleared, S3.staffUncleared, S3.academyB, S3.staffB]);
+  // completed background checks: staffCleared (academy A) + staffB (academy B). staffUncleared gets NONE.
+  await client.query(`insert into public.academy_staff_clearances (academy_group_id, actor_id, completed_at) values
+     ($1,$2, now()), ($3,$4, now()) on conflict (academy_group_id, actor_id, check_kind) do nothing`,
+     [S3.academyA, S3.staffCleared, S3.academyB, S3.staffB]);
+  // a CLASS with a tutor-leader + two children from DIFFERENT families (child-roster narrowing)
+  await client.query(`insert into public.groups (id, purpose, name, created_by) values ($1,'class','S3 Class',$2) on conflict (id) do nothing`, [S3.classGrp, S3.classLeader]);
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S3.classGrp, S3.classLeader]);
+  await client.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true), ($1,$3,'member',true) on conflict do nothing`, [S3.classGrp, FIX.childA1, FIX.childB1]);
+  // a STANDALONE class (independent leader, NOT academy staff of anything)
+  await client.query(`insert into public.groups (id, purpose, name, created_by) values ($1,'class','Standalone',$2) on conflict (id) do nothing`, [S3.standaloneGrp, S3.standaloneLeader]);
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S3.standaloneGrp, S3.standaloneLeader]);
+}
+
+// S3a · purpose-dispatched roster visibility (0041): within-group adult communication PRESERVED,
+// SEC-REV-27 CLOSED for academy parents, child rows narrowed to (own child OR the group's leader),
+// is_group_leader a strictly-narrower derived index, can_view_child untouched.
+test('S3a: purpose-dispatched roster — comms preserved, SEC-REV-27 closed for academy parents, child-roster narrowed to the leader', async () => {
+  await seedAcademy(db.client);
+
+  // (1) SEC-REV-27 CLOSED at the academy level: a plain parent cannot enumerate a peer parent.
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, FIX.parentA]) >= 1, 'academy parent reads OWN membership row');
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, FIX.parentB]), 0, 'SEC-REV-27: academy parent CANNOT enumerate a peer parent');
+  });
+
+  // (2) WITHIN-GROUP COMMUNICATION preserved: in a CLASS, co-member adults DO see one another.
+  const comms = (await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','Comms Class',$1) returning id`, [S3.classLeader])).rows[0].id;
+  await db.client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'member',true),($1,$3,'member',true)`, [comms, FIX.parentA, FIX.parentB]);
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [comms, FIX.parentB]) >= 1, 'within-group: a class co-member adult IS visible (comms preserved — NOT over-restricted)');
+  });
+
+  // (3) CHILD-ROSTER NARROWING: a plain co-member parent sees ONLY their own child; the leader sees all.
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S3.classGrp, FIX.childA1]) >= 1, 'co-parent sees OWN child membership row');
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S3.classGrp, FIX.childB1]), 0, 'co-parent CANNOT enumerate a classmate from another family');
+  });
+  await as('authenticated', S3.classLeader, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id is not null', [S3.classGrp]), 2, 'the class LEADER sees the FULL child roster (both families)');
+  });
+
+  // (4) is_group_leader ⊊ is_group_member (derived index, strictly narrower).
+  assert.equal((await db.client.query('select public.is_group_leader($1,$2) v', [S3.classGrp, S3.classLeader])).rows[0].v, true, 'leader → is_group_leader true');
+  assert.equal((await db.client.query('select public.is_group_leader($1,$2) v', [S3.classGrp, FIX.parentA])).rows[0].v, false, 'a plain co-member parent is NOT a leader');
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal((await c.query('select public.is_group_member($1) v', [S3.classGrp])).rows[0].v, true, 'the same parent IS a member (guardian branch) — leader is strictly narrower');
+  });
+
+  // (5) can_view_child STAYS PRISTINE: the class leader (no tutor_grant) sees the roster but ZERO work.
+  await as('authenticated', S3.classLeader, async (c) => {
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childB1])).rows[0].v, false, 'leader WITHOUT a grant: can_view_child = false');
+    assert.equal(await count(c, 'select 1 from public.attempts where child_id=$1', [FIX.childB1]), 0, 'leader reads 0 of a rostered child’s work (name ≠ work; childB1 HAS a seeded attempt → non-vacuous)');
+  });
+
+  // (6) CHANNEL_MEMBERS purpose-dispatch mirrors memberships (INFO-1): seed a class channel with two
+  //     adult co-members + a child. A co-member adult sees the OTHER adult (comms via channel_group) but
+  //     0 of the child row (narrowed); the leader sees the child row. Proves the channel policy, not just membership.
+  const chan = (await db.client.query(`insert into public.channels (group_id, kind, name) values ($1,'thread','S3 Chan') returning id`, [S3.classGrp])).rows[0].id;
+  await db.client.query(`insert into public.channel_members (channel_id, member_actor_id) values ($1,$2),($1,$3)`, [chan, FIX.parentA, FIX.parentB]);
+  await db.client.query(`insert into public.channel_members (channel_id, member_child_id) values ($1,$2)`, [chan, FIX.childA1]);
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.channel_members where channel_id=$1 and member_actor_id=$2', [chan, FIX.parentA]) >= 1, 'channel: a class co-member adult IS visible (comms via channel_group)');
+    assert.equal(await count(c, 'select 1 from public.channel_members where channel_id=$1 and member_child_id=$2', [chan, FIX.childA1]), 0, 'channel: a plain co-member CANNOT enumerate another family’s child channel row');
+  });
+  await as('authenticated', S3.classLeader, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.channel_members where channel_id=$1 and member_child_id=$2', [chan, FIX.childA1]), 1, 'channel: the LEADER sees the child channel row (via channel_group→is_group_leader)');
+  });
+
+  // (7) DIRECT ACADEMY CHILD-ROW narrowing (INFO-2): even if a child is a DIRECT member of the academy
+  //     group, a plain academy parent cannot enumerate another family’s child row; the guardian can.
+  await db.client.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true) on conflict do nothing`, [S3.academyA, FIX.childB1]);
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S3.academyA, FIX.childB1]), 0, 'academy: a plain parent cannot enumerate another family’s academy child row');
+  });
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S3.academyA, FIX.childB1]) >= 1, 'academy: the child’s OWN guardian sees the row (positive control)');
+  });
+});
+
+// S3b · academy staff discovery (0042): parent sees ALL staff (pick-a-leader), staff see the academy
+// roster by NAME yet 0 work, all gated on a COMPLETED BACKGROUND CHECK; borders held; audited+minimized.
+test('S3b: academy staff discovery — parent sees all staff, staff see academy kids by name yet 0 work, gated on a background check', async () => {
+  await seedAcademy(db.client);
+
+  // (6) PARENT CAN SEE ALL STAFF (cleared staff surfaced; uncleared not; peer parent still hidden).
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, S3.staffCleared]) >= 1, 'parent sees a CLEARED academy staff member (pick-a-leader)');
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, S3.staffUncleared]), 0, 'an UNCLEARED staff member is NOT surfaced (background-check gate)');
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, FIX.parentB]), 0, 'SEC-REV-27 stays closed under S3b: no peer-parent enumeration');
+  });
+
+  // (7) STAFF SEE THE ACADEMY ADULTS incl. parent connections.
+  await as('authenticated', S3.staffCleared, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, FIX.parentA]) >= 1, 'cleared staff sees parent A (connection)');
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, FIX.parentB]) >= 1, 'cleared staff sees parent B (connection)');
+  });
+
+  // (8) CROWN JEWEL — academy_child_roster: names by nickname + parent, yet ZERO work without a grant.
+  // NON-VACUOUS precondition (as owner, BEFORE the RLS probe): childB1 really has work — attempts (1) +
+  // child_skill_mastery (1) seeded (seed.mjs). A can_view_child regression would flip the 0-checks below
+  // from 0→1 and fail. (Run via db.client OUTSIDE the as()-txn so the owner sees past RLS.)
+  assert.ok((await db.client.query('select count(*)::int n from public.attempts where child_id=$1', [FIX.childB1])).rows[0].n >= 1
+    && (await db.client.query('select count(*)::int n from public.child_skill_mastery where child_id=$1', [FIX.childB1])).rows[0].n >= 1,
+    'childB1 HAS seeded attempts + mastery (the crown-jewel 0-work check is non-vacuous)');
+  await as('authenticated', S3.staffCleared, async (c) => {
+    const roster = (await c.query('select child_id, nickname, parent_id from public.academy_child_roster($1) order by nickname', [S3.academyA])).rows;
+    const ids = roster.map(r => r.child_id);
+    assert.ok(ids.includes(FIX.childA1) && ids.includes(FIX.childB1), 'staff see enrolled children (both families) by name');
+    assert.ok(!ids.includes(FIX.childA3), 'a NON-consented child is excluded (enrollment-is-consent)');
+    assert.ok(roster.every(r => typeof r.nickname === 'string' && r.nickname.length > 0 && r.parent_id), 'roster carries nickname (minimized) + parent connection');
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childB1])).rows[0].v, false, 'name ≠ work: can_view_child = false WITHOUT a grant');
+    // Defense-in-depth sweep across EVERY child-DATA table (attempts + child_skill_mastery are the
+    // non-vacuous carriers proven above; the rest are a breadth guard).
+    for (const t of ['attempts','sessions','child_skill_mastery','child_skill_misconception','assignments','submissions','teaching_artifacts','uploads','grade_jobs','grade_proposals']) {
+      assert.equal(await count(c, `select 1 from public.${t} where child_id=$1`, [FIX.childB1]), 0, `staff reads 0 of the child’s ${t} (roster ≠ child-DATA)`);
+    }
+  });
+
+  // (8b) SELF-ELEVATION DENIED (INFO-3, adversarial): a client can NEVER write a clearance to make
+  //      itself academy staff — academy_staff_clearances is FORCE-RLS with zero policies (deny-by-default).
+  await as('authenticated', FIX.parentB, async (c) => {
+    await rejects(c, `insert into public.academy_staff_clearances (academy_group_id, actor_id, completed_at) values ($1,$2, now())`, [S3.academyA, FIX.parentB], /permission denied/i, 'client insert clearance (self-elevate)');
+    await rejects(c, `update public.academy_staff_clearances set completed_at = now() where actor_id = $1`, [S3.staffUncleared], /permission denied/i, 'client update clearance');
+    await rejects(c, `select 1 from public.academy_staff_clearances limit 1`, undefined, /permission denied/i, 'client read clearance');
+  });
+
+  // (9) a plain PARENT cannot call academy_child_roster (not staff → empty).
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.academy_child_roster($1)', [S3.academyA]), 0, 'a plain parent gets NO academy child roster');
+  });
+
+  // (10) BACKGROUND-CHECK GATE (the SAFEGUARD binds): role-only tutor → empty; add a clearance → opens.
+  await as('authenticated', S3.staffUncleared, async (c) => {
+    assert.equal((await c.query('select public.is_academy_staff($1,$2) v', [S3.academyA, S3.staffUncleared])).rows[0].v, false, 'role label alone is NOT staff (needs a completed background check)');
+    assert.equal(await count(c, 'select 1 from public.academy_child_roster($1)', [S3.academyA]), 0, 'uncleared staff: no child roster');
+  });
+  await db.client.query(`insert into public.academy_staff_clearances (academy_group_id, actor_id, completed_at) values ($1,$2, now())
+     on conflict (academy_group_id, actor_id, check_kind) do update set completed_at = now(), revoked_at = null`, [S3.academyA, S3.staffUncleared]);
+  await as('authenticated', S3.staffUncleared, async (c) => {
+    assert.equal((await c.query('select public.is_academy_staff($1,$2) v', [S3.academyA, S3.staffUncleared])).rows[0].v, true, 'after a completed background check, the gate BINDS → staff');
+    assert.ok(await count(c, 'select 1 from public.academy_child_roster($1)', [S3.academyA]) >= 1, 'now the roster opens (proves the gate is real, not a no-op)');
+  });
+
+  // (11) STANDALONE + CROSS-ACADEMY BORDERS: neither reads Academy A’s roster.
+  await as('authenticated', S3.standaloneLeader, async (c) => {
+    assert.equal((await c.query('select public.is_group_leader($1,$2) v', [S3.standaloneGrp, S3.standaloneLeader])).rows[0].v, true, 'a standalone leader DOES lead their OWN group');
+    assert.equal((await c.query('select public.is_academy_staff($1,$2) v', [S3.academyA, S3.standaloneLeader])).rows[0].v, false, 'but is NEVER academy staff');
+    assert.equal(await count(c, 'select 1 from public.academy_child_roster($1)', [S3.academyA]), 0, 'standalone leader: 0 academy roster');
+  });
+  await as('authenticated', S3.staffB, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.academy_child_roster($1)', [S3.academyA]), 0, 'Academy B staff read 0 of Academy A’s roster (cross-academy border)');
+  });
+
+  // (12) AUDITED + MINIMIZED: a roster view writes an audit row carrying WHO + WHICH academy, NO child PII.
+  await as('authenticated', S3.staffCleared, async (c) => {
+    await c.query('select 1 from public.academy_child_roster($1)', [S3.academyA]);   // view (audits inside this tx)
+    const audits = (await c.query(`select child_id, detail from public.audit_log where action='academy.child_roster.view' and actor_id=$1`, [S3.staffCleared])).rows;
+    assert.ok(audits.length >= 1, 'a roster view is audited (own actor reads own audit row)');
+    assert.ok(audits.every(a => a.child_id === null && a.detail.academy_group_id === S3.academyA), 'audit carries WHO + WHICH academy, NO child PII (child_id null)');
+  });
+});

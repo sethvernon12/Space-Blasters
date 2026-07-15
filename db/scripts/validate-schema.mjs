@@ -57,9 +57,12 @@ if (!process.argv.includes('--static')) {
 
     const NEW_TABLES = ['skills', 'children', 'consent_ledger', 'attempts', 'sessions',
                         'child_skill_mastery', 'child_skill_misconception',
-                        'tutor_grants', 'rpc_rate_limits'];
+                        'tutor_grants', 'rpc_rate_limits',
+                        // group engine (0007/0008) — S0 gate: every group table must be RLS-forced
+                        'groups', 'memberships', 'channels', 'channel_members', 'events',
+                        'suppressions', 'derivation_rules', 'derivation_outbox'];
     // deny-by-default tables that intentionally have ZERO policies (definer/service only)
-    const NO_CLIENT_TABLES = ['rpc_rate_limits'];
+    const NO_CLIENT_TABLES = ['rpc_rate_limits', 'derivation_outbox'];
 
     const rls = await db.client.query(
       `select relname, relrowsecurity, relforcerowsecurity
@@ -87,6 +90,22 @@ if (!process.argv.includes('--static')) {
       } else if (polMap[t] > 0) ok(`${t}: ${polMap[t]} RLS polic${polMap[t] > 1 ? 'ies' : 'y'}`);
       else bad(`${t}: no RLS policies (deny-by-default blocks clients, but spec expects explicit owner policies)`);
     }
+
+    // SELF-EXTENDING GUARD (no silent gap): EVERY public table carrying a child/group key must be
+    // RLS enabled+forced — so a future group-scoped child-keyed table (an S5a grant table,
+    // attendance, etc.) cannot ship without RLS even if it is never added to NEW_TABLES.
+    const keyed = await db.client.query(`
+      select distinct c.relname, c.relrowsecurity, c.relforcerowsecurity
+        from pg_class c join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+        join pg_attribute a on a.attrelid = c.oid and not a.attisdropped
+       where c.relkind = 'r'
+         and a.attname = any(array['child_id','group_id','member_child_id','subject_child_id'])
+       order by c.relname`);
+    let keyedBad = 0;
+    for (const r of keyed.rows) {
+      if (!(r.relrowsecurity && r.relforcerowsecurity)) { bad(`child/group-keyed table ${r.relname} is NOT RLS enabled+forced`); keyedBad++; }
+    }
+    if (!keyedBad) ok(`all ${keyed.rows.length} child/group-keyed tables are RLS enabled+forced (self-extending guard)`);
 
     const cnt = await db.client.query(`select count(*)::int as n from public.skills`);
     if (cnt.rows[0].n === n && n === tax.skills.length) ok(`skills seed matches taxonomy (${n} rows)`);

@@ -547,6 +547,119 @@ test('B-F1: record_grade_proposal re-checks consent at write time (fail-closed, 
   assert.equal((await db.client.query(`select count(*)::int n from public.grade_proposals where job_id=$1`, [jobNo])).rows[0].n, 0, 'no proposal recorded (no side effect)');
 });
 
+// ============================================================================
+// GROUP ENGINE · S0 — the FALSIFICATION GATE. Extends the isolation matrix to the
+// group graph (0007/0008) and proves red-or-green the load-bearing facts the
+// group-engine build rests on. Seeds are owner-committed via db.client; probes run
+// as the authenticated role under RLS.
+// ============================================================================
+
+// S0 · fact (a): the group graph is cross-family isolated, AND membership is a
+// SEPARATE axis from child-DATA disclosure — a co-member without a tutor_grant is
+// is_group_member=true yet reads ZERO of the child's data (can_view_child ignores memberships).
+test('S0(a): group graph cross-family isolated; membership is NOT child-data disclosure', async () => {
+  const g = (await db.client.query(`insert into public.groups (purpose, name, created_by) values ('class','S0 Class',$1) returning id`, [FIX.parentA])).rows[0].id;
+  await db.client.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true)`, [g, FIX.childA1]);
+  const ch = (await db.client.query(`insert into public.channels (group_id, kind, name) values ($1,'thread','General') returning id`, [g])).rows[0].id;
+  await db.client.query(`insert into public.channel_members (channel_id, member_child_id, is_guardian_comember) values ($1,$2,false)`, [ch, FIX.childA1]);
+  await db.client.query(`insert into public.channel_members (channel_id, member_actor_id, is_guardian_comember) values ($1,$2,true)`, [ch, FIX.parentA]);
+  await db.client.query(`insert into public.events (kind, author_actor_id, group_id, payload) values ('schedule',$1,$2,'{}'::jsonb)`, [FIX.parentA, g]);
+
+  // POSITIVE: the owner/guardian reads the group graph
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.groups where id=$1', [g]) >= 1, 'owner reads own group');
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1', [g]) >= 1, 'owner reads roster');
+    assert.ok(await count(c, 'select 1 from public.events where group_id=$1', [g]) >= 1, 'owner reads group events');
+  });
+  // CROSS-FAMILY: a NON-member (parent B) reads ZERO across the group graph
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.groups where id=$1', [g]), 0, 'non-member: 0 groups');
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1', [g]), 0, 'non-member: 0 memberships');
+    assert.equal(await count(c, 'select 1 from public.channels where group_id=$1', [g]), 0, 'non-member: 0 channels');
+    assert.equal(await count(c, 'select 1 from public.channel_members where channel_id=$1', [ch]), 0, 'non-member: 0 channel_members');
+    assert.equal(await count(c, 'select 1 from public.events where group_id=$1', [g]), 0, 'non-member: 0 group events');
+  });
+  // anon (the public game key) can never touch ANY table in the group graph
+  await as('anon', null, async (c) => {
+    for (const t of ['groups', 'memberships', 'channels', 'channel_members', 'events', 'derivation_outbox', 'derivation_rules']) {
+      await rejects(c, `select 1 from public.${t} limit 1`, undefined, /permission denied/i, `anon ${t}`);
+    }
+  });
+  // FACT (a): add parent B as a cross-family ADULT co-member → is_group_member=true, but
+  // membership confers ZERO child-DATA access (no tutor_grant → can_view_child(childA1)=false).
+  await db.client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'member',true)`, [g, FIX.parentB]);
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.ok(await count(c, 'select 1 from public.memberships where group_id=$1', [g]) >= 1, 'co-member now reads the roster (really a member)');
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'co-member WITHOUT a grant: can_view_child = false');
+    // membership ≠ disclosure: the co-member reads ZERO of the child's data across EVERY child-DATA table
+    // (attempts + child_skill_mastery are non-vacuous — childA1 has seeded rows; a can_view_child
+    //  membership-branch regression would flip these from 0 to nonzero and fail here).
+    for (const t of ['attempts', 'sessions', 'child_skill_mastery', 'child_skill_misconception', 'assignments', 'submissions', 'teaching_artifacts', 'uploads', 'grade_jobs', 'grade_proposals']) {
+      assert.equal(await count(c, `select 1 from public.${t} where child_id=$1`, [FIX.childA1]), 0, `co-member reads 0 of the child’s ${t}`);
+    }
+  });
+});
+
+// S0 · fact (b): tutor_grants cannot yet carry a provenance-distinct, group-scoped
+// grant without collision — UNIQUE(tutor_id, child_id) blocks a second (group_derived)
+// grant alongside a parent_direct one → the S5a migration is NEEDED (surfaced now).
+test('S0(b): tutor_grants UNIQUE(tutor_id,child_id) blocks a provenance-distinct grant → S5a needed', async () => {
+  const tutorX = '0000f00d-0000-4000-8000-000000000001';
+  // grant #1 = a parent_direct grant (granted_by = the child's own parent A)
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [tutorX, FIX.childA1, FIX.parentA]);
+  // grant #2 = a PROVENANCE-DISTINCT (e.g. group_derived) grant for the SAME tutor+child, granted_by
+  // a different actor — it STILL collides under today's UNIQUE(tutor_id, child_id): the schema has no
+  // room for two distinct-origin grants on one pair. This is the S5a signal.
+  await assert.rejects(
+    db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [tutorX, FIX.childA1, FIX.parentB]),
+    /duplicate key|unique/i,
+    'a provenance-distinct grant for the same tutor+child collides on UNIQUE(tutor_id,child_id) — S5a must add origin + origin_group_id, move the uniqueness key, and ref-count');
+  await db.client.query(`delete from public.tutor_grants where tutor_id=$1`, [tutorX]); // cleanup the throwaway
+});
+
+// S0 · fact (c): purge_child cascades EVERY child-keyed group table + tutor_grants,
+// with per-table zero residual and the receipt disposition buckets each one.
+test('S0(c): purge_child cascades every group table + grants (zero residual + receipt buckets)', async () => {
+  const np = '0000ca11-0000-4000-8000-000000000001';                 // neutral parent (no fixture perturbation)
+  const kid = '0000ca11-0000-4000-8000-0000000000c1';
+  const kau = '0000ca11-0000-4000-8000-0000000000a1';
+  await db.client.query(`insert into public.children (id, parent_id, auth_user_id, nickname, grade_band) values ($1,$2,$3,'S0Kid','K')`, [kid, np, kau]);
+  const g = (await db.client.query(`insert into public.groups (purpose, name, created_by) values ('class','S0 Purge',$1) returning id`, [np])).rows[0].id;
+  await db.client.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true)`, [g, kid]);
+  const ch = (await db.client.query(`insert into public.channels (group_id, kind, name) values ($1,'thread','G') returning id`, [g])).rows[0].id;
+  await db.client.query(`insert into public.channel_members (channel_id, member_child_id, is_guardian_comember) values ($1,$2,false)`, [ch, kid]);
+  const trigEv = (await db.client.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3, jsonb_build_object('action','join')) returning id`, [np, kid, g])).rows[0].id;
+  await db.client.query(`insert into public.derivation_outbox (trigger_event_id, kind, group_id, member_child_id, role, status, idempotency_key) values ($1,'join',$2,$3,'member','pending',$4)`, [trigEv, g, kid, 's0:' + kid]);
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, ['0000f00d-0000-4000-8000-000000000002', kid, np]);
+
+  const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id']];
+  // BEFORE purge: each seeded table has the child's row — so zero-after is non-vacuous AND the
+  // disposition-VALUE assertions below pin purge_child's OWN accounting (not just FK cascade).
+  const seeded = {};
+  for (const [t, col] of GT) {
+    seeded[t] = (await db.client.query(`select count(*)::int n from public.${t} where ${col}=$1`, [kid])).rows[0].n;
+    assert.ok(seeded[t] >= 1, `seeded ${t} for the child`);
+  }
+  const seededSubjEvents = (await db.client.query(`select count(*)::int n from public.events where subject_child_id=$1`, [kid])).rows[0].n;
+  assert.ok(seededSubjEvents >= 1, 'seeded subject events');
+
+  const r = (await db.client.query(`select public.purge_child($1,$2,$3) r`, [kid, np, np])).rows[0].r;
+  assert.equal(r.ok, true, 'purge_child ok');
+  for (const [t, col] of GT) {
+    assert.equal((await db.client.query(`select count(*)::int n from public.${t} where ${col}=$1`, [kid])).rows[0].n, 0, `${t}: zero residual`);
+  }
+  assert.equal((await db.client.query(`select count(*)::int n from public.events where subject_child_id=$1`, [kid])).rows[0].n, 0, 'events(subject): zero residual');
+  // the receipt disposition VALUES equal the seeded counts — pins purge_child's OWN receipt
+  // accounting (a regression dropping an explicit delete under-reports here even though FK cascade
+  // still leaves zero residual — the COPPA covenant receipt must stay accurate).
+  const del = r.disposition.deleted;
+  assert.equal(del.memberships, seeded.memberships, 'receipt bucket: memberships');
+  assert.equal(del.channel_members, seeded.channel_members, 'receipt bucket: channel_members');
+  assert.equal(del.derivation_outbox, seeded.derivation_outbox, 'receipt bucket: derivation_outbox');
+  assert.equal(del.tutor_grants, seeded.tutor_grants, 'receipt bucket: tutor_grants');
+  assert.equal(del.subject_events, seededSubjEvents, 'receipt bucket: subject_events');
+});
+
 // Phase 4/5 · the deletion-covenant + moderation records are ADULT-keyed (parent_id = auth.uid()).
 // A parent sees their OWN standing/receipts (transparency) but NEVER another family's — and can
 // never forge or mutate them (the deleters/definer functions are the only writers).

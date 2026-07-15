@@ -75,6 +75,7 @@ export const FILES_M3 = [
   'supabase/migrations/0035_receipt_anchor_sink.sql',
   'supabase/migrations/0036_pin_adult_helpers.sql',
   'supabase/migrations/0037_child_actor_self.sql',
+  'supabase/migrations/0038_grade_proposal_consent.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

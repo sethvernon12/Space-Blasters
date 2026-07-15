@@ -516,6 +516,37 @@ test('ACCEPTED: has_active_consent is an intentional unscoped consent predicate 
   });
 });
 
+// Phase 5 · B-F1 (KER-2): record_grade_proposal re-verifies the SUBJECT CHILD's consent at
+// RECORD time, before any write — a proposal cannot be recorded for a consent-revoked child
+// even though the job was created while consent was valid (consent is never inherited from the
+// job's creation-time check). Fail-closed with NO side effects.
+test('B-F1: record_grade_proposal re-checks consent at write time (fail-closed, no side effects)', async () => {
+  const seedClaimedJob = async (childId, tag) => {
+    const up = (await db.client.query(
+      `insert into public.uploads (child_id, uploaded_by, uploader_role, storage_path, content_type, byte_size, exif_stripped, status)
+       values ($1,$1,'parent',$2,'image/jpeg',1,true,'inbox') returning id`, [childId, `${childId}/${tag}.jpg`])).rows[0].id;
+    return (await db.client.query(
+      `insert into public.grade_jobs (child_id, upload_id, skill_id, problem_dna, client_job_id, status)
+       values ($1,$2,'mult2','{}'::jsonb, gen_random_uuid(), 'claimed') returning id`, [childId, up])).rows[0].id;
+  };
+  const REC = `select public.record_grade_proposal($1, 42, 0.9, 'fb', null, 'm', 'mock', 0, 1) r`;
+
+  // POSITIVE: a CONSENTED child (A1) records exactly as before — proposal + job → 'proposed'
+  const jobOk = await seedClaimedJob(FIX.childA1, 'bf1ok');
+  const recOk = (await db.client.query(REC, [jobOk])).rows[0].r;
+  assert.equal(recOk.ok, true, 'consented child: proposal recorded');
+  assert.equal((await db.client.query(`select status from public.grade_jobs where id=$1`, [jobOk])).rows[0].status, 'proposed', 'job → proposed');
+  assert.equal((await db.client.query(`select count(*)::int n from public.grade_proposals where job_id=$1`, [jobOk])).rows[0].n, 1, 'proposal row recorded');
+
+  // NEGATIVE: a consent-revoked child (A3 has NO consent row) → no_consent, and NO side effects
+  const jobNo = await seedClaimedJob(FIX.childA3, 'bf1no');
+  const recNo = (await db.client.query(REC, [jobNo])).rows[0].r;
+  assert.equal(recNo.ok, false, 'no-consent child: refused');
+  assert.equal(recNo.error, 'no_consent', 'error is no_consent');
+  assert.equal((await db.client.query(`select status from public.grade_jobs where id=$1`, [jobNo])).rows[0].status, 'claimed', 'job NOT flipped (no side effect)');
+  assert.equal((await db.client.query(`select count(*)::int n from public.grade_proposals where job_id=$1`, [jobNo])).rows[0].n, 0, 'no proposal recorded (no side effect)');
+});
+
 // Phase 4/5 · the deletion-covenant + moderation records are ADULT-keyed (parent_id = auth.uid()).
 // A parent sees their OWN standing/receipts (transparency) but NEVER another family's — and can
 // never forge or mutate them (the deleters/definer functions are the only writers).

@@ -94,7 +94,8 @@ try {
   forgeBlocked ? ok('register_child is service-only — a client cannot bind an arbitrary adult uid (no takeover / no is_child_actor poisoning)') : bad(`register_child forge: ${JSON.stringify({ forge, sethPoisoned })}`)
 
   // ---- 6. single-use / replay: a one-time link cannot be verified twice ----
-  const admin = createClient(cfg.apiUrl, cfg.serviceKey, { auth: { persistSession: false } })
+  // reuse the service-role `admin` from step 1 — a second identical `const admin` here was a
+  // duplicate declaration that broke parsing since Phase 3.5b (removed).
   const { data: u2 } = await admin.auth.admin.getUserById((await q(`select auth_user_id from public.children where id=$1`, [newId])).rows[0].auth_user_id)
   const { data: link } = await admin.auth.admin.generateLink({ type: 'magiclink', email: u2.user.email })
   const ex = createClient(cfg.apiUrl, cfg.anonKey, { auth: { persistSession: false } })

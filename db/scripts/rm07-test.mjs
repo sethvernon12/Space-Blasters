@@ -21,14 +21,10 @@ const q = (sql, p = []) => db.query(sql, p)
 // the drain is worker/service-only (revoked from authenticated, 0011 M4) — run it via the service pg connection
 const drain = async () => (await q('select public.drain_derivations() as r')).rows[0].r
 
-console.log('Setup: families + derivation rules + a class group with a schedule…')
+console.log('Setup: families + a class group with a schedule (derivation rules seeded by 0039)…')
 const uids = await setupFamily(cfg)
 await db.connect()
-// rules-as-data (DER-04)
-await q(`insert into public.derivation_rules (purpose, role, rule_kind, spec) values
-  ('class','member','channel', jsonb_build_object('channel_name','General')),
-  ('class','member','requirement', jsonb_build_object('requirement_key','enrollment_form')),
-  ('team','member','channel', jsonb_build_object('channel_name','Team'))`)
+// S1: derivation rules for class/team are seeded as DATA by migration 0039 — validated below.
 
 const S = {}
 for (const [w, e] of [['seth', A.parent.email], ['dana', B.parent.email], ['rose', A.tutor.email]]) S[w] = await signInAs(cfg, e)
@@ -74,7 +70,7 @@ console.log('DER-05 (channels + guardian co-membership):')
 console.log('DER-06 (requirement-sets):')
 {
   const reqs = (await q(`select payload->>'requirement_key' k, payload->>'status' s from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2`, [mathClass, CID.Brielle])).rows
-  reqs.some((r) => r.k === 'enrollment_form' && r.s === 'assigned') && !reqs.some((r) => r.k === 'waiver') ? ok('enrollment_form requirement assigned (team waiver NOT — non-matching purpose)') : bad(`requirements: ${JSON.stringify(reqs)}`)
+  reqs.some((r) => r.k === 'enrollment_form' && r.s === 'assigned') && !reqs.some((r) => r.k === 'athletics_waiver') ? ok('enrollment_form requirement assigned (team athletics_waiver NOT — non-matching purpose)') : bad(`requirements: ${JSON.stringify(reqs)}`)
 }
 
 // ---- DER-07: guardian calendar = derived union; cross-family excluded ----
@@ -165,6 +161,45 @@ console.log('DER-12 (idempotent + reversible):')
   const cancelled = (await q(`select count(*)::int n from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2 and payload->>'status'='cancelled'`, [mathClass, CID.Brielle])).rows[0].n
   const assignedStill = (await q(`select count(*)::int n from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2 and payload->>'status'='assigned'`, [mathClass, CID.Brielle])).rows[0].n
   childActive?.active === false && cancelled >= 1 && assignedStill >= 1 ? ok('leave → membership withdrawn + requirement cancelled (superseding event); original assigned event PRESERVED') : bad(`reversal: active=${childActive?.active} cancelled=${cancelled} assignedStill=${assignedStill}`)
+}
+
+// ---- S2 (create_group RPC) + S1 (purpose-scoped derivation on a real created group) ----
+console.log('S2 (create_group) + S1 (class/team purpose-scoping):')
+{
+  // S2: the creator stands up a TEAM (leader = coach) via the RPC — no bespoke write path
+  const cg = (await S.seth.client.rpc('create_group', { p_purpose: 'team', p_name: 'Wrestling Team' })).data
+  const team = cg?.group_id
+  const lead = (await q(`select role from public.memberships where group_id=$1 and member_actor_id=$2`, [team, uids.seth])).rows[0]
+  const ev = (await q(`select count(*)::int n from public.events where kind='membership' and group_id=$1 and payload->>'action'='join'`, [team])).rows[0].n
+  const ob = (await q(`select count(*)::int n from public.derivation_outbox where group_id=$1`, [team])).rows[0].n
+  const audit = (await q(`select count(*)::int n from public.audit_log where action='group.create' and (detail->>'group_id')=$1`, [team])).rows[0].n
+  cg?.ok && cg.role === 'coach' && lead?.role === 'coach' && ev >= 1 && ob >= 1 && audit === 1
+    ? ok('create_group: team created; creator is the coach-leader via the transactional outbox (membership+Event+outbox); audited')
+    : bad(`create_group team: ${JSON.stringify({ cg, lead, ev, ob, audit })}`)
+  // a class leader is a tutor (leader role by purpose)
+  const cls2 = (await S.seth.client.rpc('create_group', { p_purpose: 'class', p_name: 'Science' })).data
+  cls2?.ok && cls2.role === 'tutor' ? ok('create_group: a class leader is a tutor (role×purpose)') : bad(`create_group class role: ${JSON.stringify(cls2)}`)
+  // guards: a child actor cannot create; family/academy purposes are refused
+  const childCg = (await S.brielle.client.rpc('create_group', { p_purpose: 'team', p_name: 'x' })).data
+  const badP = (await S.seth.client.rpc('create_group', { p_purpose: 'family', p_name: 'x' })).data
+  childCg?.error === 'not_authorized' && badP?.error === 'bad_purpose'
+    ? ok('create_group: child actor refused; family/academy purposes refused (bad_purpose)')
+    : bad(`create_group guards: child=${JSON.stringify(childCg)} badP=${JSON.stringify(badP)}`)
+
+  // S1: join a child to the TEAM and drain → team-scoped derivation (Team channel + athletics_waiver,
+  //     NEVER the class enrollment_form). Theo's consent was restored in DER-11 above.
+  await S.seth.client.rpc('join_group', { p_group_id: team, p_member_child_id: CID.Theo, p_member_actor_id: null, p_role: 'member' })
+  await drain()
+  const teamChan = (await q(`select name from public.channels where group_id=$1`, [team])).rows.map((r) => r.name)
+  const teamReqs = (await q(`select payload->>'requirement_key' k from public.events where kind='requirement' and group_id=$1 and subject_child_id=$2 and payload->>'status'='assigned'`, [team, CID.Theo])).rows.map((r) => r.k)
+  teamChan.includes('Team') && teamReqs.includes('athletics_waiver') && !teamReqs.includes('enrollment_form')
+    ? ok('S1: team derives the Team channel + athletics_waiver requirement; NOT the class enrollment_form (purpose-scoped)')
+    : bad(`S1 team scoping: chan=${JSON.stringify(teamChan)} reqs=${JSON.stringify(teamReqs)}`)
+  // and the CLASS never receives the team waiver
+  const classReqs = (await q(`select distinct payload->>'requirement_key' k from public.events where kind='requirement' and group_id=$1 and payload->>'status'='assigned'`, [mathClass])).rows.map((r) => r.k)
+  classReqs.includes('enrollment_form') && !classReqs.includes('athletics_waiver')
+    ? ok('S1: the class has enrollment_form and NEVER athletics_waiver (a team waiver is never assigned to a class)')
+    : bad(`S1 class scoping: ${JSON.stringify(classReqs)}`)
 }
 
 // ---- Isolation: cross-family cannot read the group graph ----

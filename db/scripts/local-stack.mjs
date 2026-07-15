@@ -76,6 +76,8 @@ export const FILES_M3 = [
   'supabase/migrations/0036_pin_adult_helpers.sql',
   'supabase/migrations/0037_child_actor_self.sql',
   'supabase/migrations/0038_grade_proposal_consent.sql',
+  'supabase/migrations/0039_group_rules.sql',
+  'supabase/migrations/0040_create_group.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

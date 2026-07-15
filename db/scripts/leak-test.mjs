@@ -660,6 +660,24 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   assert.equal(del.subject_events, seededSubjEvents, 'receipt bucket: subject_events');
 });
 
+// S2 · create_group is authenticated-only + ZOMBIE-WRITE guarded. The RPC is SECURITY DEFINER
+// (bypasses the groups_insert policy's `not actor_is_deleted` guard), so it must re-check itself.
+test('S2: create_group is authenticated-only + zombie-write-guarded', async () => {
+  await as('anon', null, async (c) => {
+    await rejects(c, `select public.create_group('team','x',null)`, undefined, /permission denied/i, 'anon create_group');
+  });
+  // a DELETED actor (a deletion receipt exists for its uid) cannot create a group
+  const zParent = '0000dea2-0000-4000-8000-000000000001';
+  const zed = '0000dea2-0000-4000-8000-0000000000c1';
+  await db.client.query(
+    `insert into public.deletion_receipts (child_id, parent_id, child_auth_user_id, deleting_actor, disposition, receipt_hash)
+     values (gen_random_uuid(), $1, $2, $1, '{}'::jsonb, 's2-zombie')`, [zParent, zed]);
+  await as('authenticated', zed, async (c) => {
+    assert.equal((await c.query(`select public.create_group('team','x',null) r`)).rows[0].r.error, 'not_authorized',
+      'a deleted actor cannot create a group (zombie-write guard)');
+  });
+});
+
 // Phase 4/5 · the deletion-covenant + moderation records are ADULT-keyed (parent_id = auth.uid()).
 // A parent sees their OWN standing/receipts (transparency) but NEVER another family's — and can
 // never forge or mutate them (the deleters/definer functions are the only writers).

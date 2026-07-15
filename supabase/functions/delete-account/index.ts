@@ -45,8 +45,11 @@ Deno.serve(async (req) => {
   }
 
   // a child actor can never delete an account
-  const { data: amChild } = await caller.rpc('is_child_actor', { p_uid: parentUid })
-  if (amChild === true) return json({ denied: true, reason: 'not_authorized' }, 403)
+  // self-check (3b): no arbitrary-uid probe. FAIL-CLOSED — is_child_actor_self() always returns
+  // a real boolean, so a null/error means the RPC was unreachable (e.g. a deploy window before
+  // 0037 lands); deny rather than let a child slip the gate (matches the step-up posture above).
+  const { data: amChild, error: acErr } = await caller.rpc('is_child_actor_self')
+  if (acErr || amChild !== false) return json({ denied: true, reason: 'not_authorized' }, 403)
 
   const service = createClient(URL_, SERVICE, { auth: { persistSession: false } })
 

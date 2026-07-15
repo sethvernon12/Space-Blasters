@@ -483,6 +483,39 @@ test('adult-keyed helpers do not leak another adult’s standing (D-LOW1)', asyn
   });
 });
 
+// Phase 5 · Slice 3b: is_child_actor(uuid) was a cross-family child-existence oracle. It is
+// now REVOKED from authenticated; the SEC-REV-13 belt in teaching_artifacts_insert uses the
+// param-less is_child_actor_self() instead (behavior-preservation proven end-to-end by rm08).
+test('is_child_actor oracle closed; self-check preserved (D-LOW1 sibling)', async () => {
+  await as('authenticated', FIX.parentB, async (c) => {
+    await rejects(c, `select public.is_child_actor($1)`, [FIX.childA1Login], /permission denied/i, 'is_child_actor(uuid) no longer client-callable');
+    assert.equal((await c.query(`select public.is_child_actor_self() s`)).rows[0].s, false, 'adult self → false');
+  });
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal((await c.query(`select public.is_child_actor_self() s`)).rows[0].s, true, 'child self → true (drives the SEC-REV-13 belt)');
+  });
+  // the SERVICE-ROLE adult-gate still rejects a child parent-of-record after the revoke:
+  // register_child is SECURITY DEFINER and calls is_child_actor(p_parent_id) as OWNER (which
+  // keeps EXECUTE; the revoke is `from authenticated` only). Direct coverage of the null-auth.uid
+  // gate — rm11-mint-test.mjs is pre-existing syntax-broken (duplicate `const admin`, since 3.5b).
+  const reg = (await db.client.query(`select public.register_child($1, gen_random_uuid(), 'x', 'K') r`, [FIX.childA1Login])).rows[0].r;
+  assert.equal(reg.error, 'not_authorized', 'register_child rejects a child parent-of-record (service-role adult-gate intact post-revoke)');
+});
+
+// ACCEPTED LOW-RISK ORACLE (documented: docs/BACKLOG.md SEC-REV-28; ties SEC-REV-L12). The
+// roster (memberships/channel_members, 0007) and child-self (children_select, 0006) policies
+// LEGITIMATELY gate on consent WITHOUT can_view_child, and has_active_consent is security-
+// definer to avoid children RLS recursion (0006:32). The residual: an authenticated adult can
+// read another child's single consent boolean (needs an unguessable v4 child uuid). This test
+// PINS that accepted behavior so a future scoping change trips here for a conscious decision
+// (revisit at the pre-scale gate / if the multi-family roster model changes).
+test('ACCEPTED: has_active_consent is an intentional unscoped consent predicate (D-LOW1 sibling, SEC-REV-28)', async () => {
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal((await c.query(`select public.has_active_consent($1) h`, [FIX.childA1])).rows[0].h, true,
+      'unscoped by design (roster/child-self need it); tracked as SEC-REV-28 — a future scoping change trips this test');
+  });
+});
+
 // Phase 4/5 · the deletion-covenant + moderation records are ADULT-keyed (parent_id = auth.uid()).
 // A parent sees their OWN standing/receipts (transparency) but NEVER another family's — and can
 // never forge or mutate them (the deleters/definer functions are the only writers).

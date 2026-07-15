@@ -43,8 +43,10 @@ Deno.serve(async (req) => {
   }
 
   // 3) never a child actor
-  const { data: amChild } = await caller.rpc('is_child_actor', { p_uid: parentUid })
-  if (amChild === true) return json({ denied: true, reason: 'not_authorized' }, 403)
+  // self-check (3b): no arbitrary-uid probe. FAIL-CLOSED — a null/error (RPC unreachable, e.g. a
+  // deploy window before 0037 lands) denies rather than letting a child slip the gate.
+  const { data: amChild, error: acErr } = await caller.rpc('is_child_actor_self')
+  if (acErr || amChild !== false) return json({ denied: true, reason: 'not_authorized' }, 403)
 
   const body = await req.json().catch(() => ({}))
   const childId = String(body?.childId ?? body?.child_id ?? '')

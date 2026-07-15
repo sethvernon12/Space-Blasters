@@ -42,8 +42,10 @@ Deno.serve(async (req) => {
   const caller = createClient(URL_, ANON, { global: { headers: { Authorization: auth } }, auth: { persistSession: false } })
   const { data: who } = await caller.auth.getUser()
   if (!who?.user) return json({ error: 'unauthenticated' }, 401)
-  const { data: amChild } = await caller.rpc('is_child_actor', { p_uid: who.user.id })
-  if (amChild === true) return json({ denied: true, reason: 'not_authorized' }, 403)
+  // self-check (3b): no arbitrary-uid probe. FAIL-CLOSED — a null/error (RPC unreachable, e.g. a
+  // deploy window before 0037 lands) denies rather than letting a child slip the gate.
+  const { data: amChild, error: acErr } = await caller.rpc('is_child_actor_self')
+  if (acErr || amChild !== false) return json({ denied: true, reason: 'not_authorized' }, 403)
 
   const body = await req.json().catch(() => ({}))
   const nickname = String(body?.nickname ?? '').slice(0, 40).trim()

@@ -631,8 +631,9 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   const trigEv = (await db.client.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3, jsonb_build_object('action','join')) returning id`, [np, kid, g])).rows[0].id;
   await db.client.query(`insert into public.derivation_outbox (trigger_event_id, kind, group_id, member_child_id, role, status, idempotency_key) values ($1,'join',$2,$3,'member','pending',$4)`, [trigEv, g, kid, 's0:' + kid]);
   await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, ['0000f00d-0000-4000-8000-000000000002', kid, np]);
+  await db.client.query(`insert into public.membership_requests (group_id, member_child_id, requested_by, status) values ($1,$2,$3,'pending')`, [g, kid, np]);  // S4: RESTRICT → purge_child must delete it
 
-  const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id']];
+  const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id'], ['membership_requests', 'member_child_id']];
   // BEFORE purge: each seeded table has the child's row — so zero-after is non-vacuous AND the
   // disposition-VALUE assertions below pin purge_child's OWN accounting (not just FK cascade).
   const seeded = {};
@@ -657,6 +658,7 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   assert.equal(del.channel_members, seeded.channel_members, 'receipt bucket: channel_members');
   assert.equal(del.derivation_outbox, seeded.derivation_outbox, 'receipt bucket: derivation_outbox');
   assert.equal(del.tutor_grants, seeded.tutor_grants, 'receipt bucket: tutor_grants');
+  assert.equal(del.membership_requests, seeded.membership_requests, 'receipt bucket: membership_requests');
   assert.equal(del.subject_events, seededSubjEvents, 'receipt bucket: subject_events');
 });
 
@@ -934,5 +936,169 @@ test('S3b: academy staff discovery — parent sees all staff, staff see academy 
     const audits = (await c.query(`select child_id, detail from public.audit_log where action='academy.child_roster.view' and actor_id=$1`, [S3.staffCleared])).rows;
     assert.ok(audits.length >= 1, 'a roster view is audited (own actor reads own audit row)');
     assert.ok(audits.every(a => a.child_id === null && a.detail.academy_group_id === S3.academyA), 'audit carries WHO + WHICH academy, NO child PII (child_id null)');
+  });
+});
+
+// ============================================================================
+// GROUP ENGINE · S4 — DISTRIBUTED SPLIT-GATE ADD (0043). Relaxed join_group ACTIVE lane
+// (can_write_child gate byte-for-byte) + the PENDING cross-family request lane
+// (membership_requests: NO membership until the child's own parent confirms). Fixed uids;
+// write flows run inside ONE as()-txn with jwt-sub switching (rolled back). `reset role`
+// becomes the superuser to run the worker drain (revoked from authenticated/service_role).
+// ============================================================================
+const S4 = {
+  cls:        '0000c1a5-0000-4000-8000-000000000004',   // a stranger-led class (no academy)
+  leader:     '0000c1a5-0000-4000-8000-0000000000c4',
+  acadCls:    '0000c1a5-0000-4000-8000-000000000005',   // a class OWNED by Academy A (org_id = S3.academyA)
+  acadLeader: '0000c1a5-0000-4000-8000-0000000000c5',
+  stranger:   '0000577a-0000-4000-8000-000000000001',   // not a leader / staff / parent
+};
+async function seedS4(client) {
+  await client.query(`insert into public.groups (id, purpose, name, created_by) values ($1,'class','S4 Class',$2) on conflict (id) do nothing`, [S4.cls, S4.leader]);
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S4.cls, S4.leader]);
+  await client.query(`insert into public.groups (id, purpose, name, org_id, created_by) values ($1,'class','S4 Acad Class',$2,$3) on conflict (id) do nothing`, [S4.acadCls, S3.academyA, S4.acadLeader]);
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S4.acadCls, S4.acadLeader]);
+}
+const be = async (c, sub) => { await c.query(`select set_config('request.jwt.claims', $1, true)`, [JSON.stringify({ sub })]); };
+
+// S4a — relaxed ACTIVE lane: distributed WHO, can_write_child border byte-for-byte; DER-11 preserved.
+test('S4a: distributed active add — parent adds own child to any class; cross-family refused; DER-11 hold preserved', async () => {
+  await seedAcademy(db.client); await seedS4(db.client);
+
+  // (1) OWN-CHILD active add to a class the parent does NOT own → active; leader sees it; other family 0.
+  await as('authenticated', FIX.parentA, async (c) => {
+    const r = (await c.query(`select public.join_group($1,$2,null,'member') r`, [S4.cls, FIX.childA1])).rows[0].r;
+    assert.equal(r.ok, true, 'parent adds OWN child to a class they do NOT own → ACTIVE (distributed easy-in)');
+    await be(c, S4.leader);
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2 and active', [S4.cls, FIX.childA1]), 1, 'the leader sees childA1 active on the roster (is_group_leader)');
+    await be(c, FIX.parentB);
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S4.cls, FIX.childA1]), 0, 'another family reads 0 (cross-family)');
+  });
+
+  // (border) CROSS-FAMILY active add is REFUSED — can_write_child gate UNCHANGED (C1 invariant).
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S4.cls, FIX.childB1])).rows[0].r.error, 'not_authorized',
+      'parentA CANNOT actively add childB1 (cross-family; can_write_child border preserved byte-for-byte)');
+  });
+
+  // (7) a stranger (not leader/staff/parent) can neither active-add nor request.
+  await as('authenticated', S4.stranger, async (c) => {
+    assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S4.cls, FIX.childA1])).rows[0].r.error, 'not_authorized', 'stranger active add refused (no can_write_child)');
+    assert.equal((await c.query(`select public.request_add($1,$2) r`, [S4.cls, FIX.childB1])).rows[0].r.error, 'not_authorized', 'stranger request_add refused (not leader/staff)');
+  });
+
+  // (INFO-2) a CHILD login cannot self-enroll — can_write_child(self) is true, so the parent-in-the-loop
+  // guard (COPPA) must block it explicitly. (childA1Login is childA1's own auth user.)
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S4.cls, FIX.childA1])).rows[0].r.error, 'not_authorized', 'a child login CANNOT self-enroll into a class (parent-in-the-loop)');
+  });
+
+  // (11) DER-11 preserved: an OWN-child active add of a NO-consent child → membership created, drain HOLDS.
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S4.cls, FIX.childA3])).rows[0].r.ok, true, 'own-child active add succeeds even for a no-consent child (membership created)');
+    await c.query('reset role');                                   // superuser → run the worker drain
+    await c.query('select public.drain_derivations()');
+    assert.equal((await c.query(`select status from public.derivation_outbox where group_id=$1 and member_child_id=$2`, [S4.cls, FIX.childA3])).rows[0].status, 'held',
+      'DER-11: a no-consent child → outbox HELD (nothing derived) — preserved under the relaxed lane');
+  });
+});
+
+// S4b — the PENDING cross-family lane: request → HELD (no membership) → parent confirms → active.
+test('S4b: cross-family request is HELD (no membership) and never surfaces, until the child’s own parent confirms', async () => {
+  await seedAcademy(db.client); await seedS4(db.client);
+  await as('authenticated', S4.leader, async (c) => {
+    // (2) leader requests a cross-family child → pending REQUEST, and NOTHING is materialized.
+    const reqId = (await c.query(`select public.request_add($1,$2,'member','fill a gap') r`, [S4.cls, FIX.childB1])).rows[0].r.request_id;
+    assert.ok(reqId, 'leader requests a cross-family child → a pending request id');
+    await c.query('reset role');                                   // superuser: prove ABSENCE (not RLS-hidden)
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S4.cls, FIX.childB1]), 0, 'HELD: NO membership row (border by absence)');
+    assert.equal(await count(c, 'select 1 from public.derivation_outbox where group_id=$1 and member_child_id=$2', [S4.cls, FIX.childB1]), 0, 'HELD: NO outbox row');
+    assert.equal(await count(c, 'select 1 from public.channel_members cm join public.channels ch on ch.id=cm.channel_id where ch.group_id=$1 and cm.member_child_id=$2', [S4.cls, FIX.childB1]), 0, 'HELD: NO channel co-membership');
+
+    // (3) the held add never surfaces to the leader as a ROSTER member; work stays 0.
+    await c.query('set local role authenticated'); await be(c, S4.leader);
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S4.cls, FIX.childB1]), 0, 'leader sees NO membership for the pending child');
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childB1])).rows[0].v, false, 'leader: can_view_child=false (no grant; work is S5)');
+    assert.equal(await count(c, 'select 1 from public.my_pending_add_requests() where id=$1', [reqId]), 1, 'the requester sees their OWN pending request');
+
+    // (4) the child's OWN parent sees the pending request (cockpit); another family does NOT.
+    await be(c, FIX.parentB);
+    assert.equal(await count(c, 'select 1 from public.my_pending_add_requests() where id=$1', [reqId]), 1, 'the child’s parent sees the pending request (cockpit / self-correct path)');
+    await be(c, FIX.parentA);
+    assert.equal(await count(c, 'select 1 from public.my_pending_add_requests() where id=$1', [reqId]), 0, 'another family does NOT see the pending request (border)');
+
+    // (6) confirm authz: the requester/leader CANNOT self-confirm.
+    await be(c, S4.leader);
+    assert.equal((await c.query(`select public.confirm_add($1) r`, [reqId])).rows[0].r.error, 'not_authorized', 'the requester CANNOT self-confirm (only the child’s parent)');
+
+    // (5) the parent confirms → active; drain derives participation; leader sees the roster identity.
+    await be(c, FIX.parentB);
+    assert.equal((await c.query(`select public.confirm_add($1) r`, [reqId])).rows[0].r.ok, true, 'the child’s own parent confirms → active');
+    await c.query('reset role');                                   // membership_requests is deny-by-default (RPC-only); read status as superuser
+    assert.equal((await c.query(`select status from public.membership_requests where id=$1`, [reqId])).rows[0].status, 'confirmed', 'request → confirmed');
+    await c.query('select public.drain_derivations()');
+    assert.equal(await count(c, 'select 1 from public.channel_members cm join public.channels ch on ch.id=cm.channel_id where ch.group_id=$1 and cm.member_child_id=$2', [S4.cls, FIX.childB1]), 1, 'after confirm + drain: the child PARTICIPATES (channel co-membership derived)');
+
+    // (8) leader now sees the roster identity but STILL 0 work (can_view_child pristine — S5 owns the grant).
+    await c.query('set local role authenticated'); await be(c, S4.leader);
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2 and active', [S4.cls, FIX.childB1]), 1, 'after confirm: leader sees childB1 active on the roster');
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childB1])).rows[0].v, false, 'after confirm: leader STILL 0 work (can_view_child false)');
+  });
+});
+
+// S4c — request-lane borders + idempotent + reversible (decline/cancel) + S3 still holds.
+test('S4c: request-lane borders, idempotent request, reversible decline/cancel; S3 rules still hold', async () => {
+  await seedAcademy(db.client); await seedS4(db.client);
+
+  // (10) academy-staff request path (via org_id) + cross-academy border.
+  await as('authenticated', S3.staffCleared, async (c) => {
+    assert.equal((await c.query(`select public.request_add($1,$2) r`, [S4.acadCls, FIX.childB1])).rows[0].r.ok, true, 'academy staff can request into a class OWNED by THEIR academy (org_id)');
+  });
+  await as('authenticated', S3.staffB, async (c) => {
+    assert.equal((await c.query(`select public.request_add($1,$2) r`, [S4.acadCls, FIX.childB1])).rows[0].r.error, 'not_authorized', 'academy B staff CANNOT request into academy A’s class (cross-academy border)');
+  });
+
+  // (12a) idempotent: a re-request for the same (group, child) returns the SAME id (no duplicate).
+  await as('authenticated', S4.leader, async (c) => {
+    const a = (await c.query(`select public.request_add($1,$2) r`, [S4.cls, FIX.childB1])).rows[0].r;
+    const b = (await c.query(`select public.request_add($1,$2) r`, [S4.cls, FIX.childB1])).rows[0].r;
+    assert.equal(a.request_id, b.request_id, 'a re-request returns the existing pending (no duplicate)');
+  });
+
+  // (12b) reversible: the parent DECLINES → declined, no membership; the requester CANCELS → cancelled.
+  await as('authenticated', S4.leader, async (c) => {
+    const reqId = (await c.query(`select public.request_add($1,$2) r`, [S4.cls, FIX.childB1])).rows[0].r.request_id;
+    await be(c, FIX.parentB);
+    assert.equal((await c.query(`select public.decline_add($1,'not this class') r`, [reqId])).rows[0].r.status, 'declined', 'the child’s parent declines → declined');
+    await c.query('reset role');
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_child_id=$2', [S4.cls, FIX.childB1]), 0, 'a declined request materializes NO membership');
+  });
+  await as('authenticated', S4.leader, async (c) => {
+    const reqId = (await c.query(`select public.request_add($1,$2) r`, [S4.cls, FIX.childB1])).rows[0].r.request_id;
+    assert.equal((await c.query(`select public.decline_add($1) r`, [reqId])).rows[0].r.status, 'cancelled', 'the requester cancels their OWN request → cancelled');
+  });
+
+  // (INFO-2) a CHILD cannot confirm a request about themselves (self-consent blocked); the parent can.
+  await as('authenticated', S4.leader, async (c) => {
+    const reqId = (await c.query(`select public.request_add($1,$2) r`, [S4.cls, FIX.childA1])).rows[0].r.request_id;
+    await be(c, FIX.childA1Login);
+    assert.equal((await c.query(`select public.confirm_add($1) r`, [reqId])).rows[0].r.error, 'not_authorized', 'a child CANNOT confirm a request about themselves (parent-in-the-loop)');
+    await be(c, FIX.parentA);
+    assert.equal((await c.query(`select public.confirm_add($1) r`, [reqId])).rows[0].r.ok, true, 'the child’s PARENT confirms → ok');
+  });
+
+  // (SHOULD-FIX 1) deny-by-default PIN: membership_requests is RPC-only — no client read/write/self-elevate.
+  await as('authenticated', FIX.parentB, async (c) => {
+    await rejects(c, `select 1 from public.membership_requests limit 1`, undefined, /permission denied/i, 'client read membership_requests');
+    await rejects(c, `insert into public.membership_requests (group_id, member_child_id, requested_by) values ($1,$2,$3)`, [S4.cls, FIX.childB1, FIX.parentB], /permission denied/i, 'client insert membership_requests (self-elevate)');
+    await rejects(c, `update public.membership_requests set status='confirmed' where member_child_id=$1`, [FIX.childB1], /permission denied/i, 'client update membership_requests');
+  });
+  await as('anon', null, async (c) => {
+    await rejects(c, `select 1 from public.membership_requests limit 1`, undefined, /permission denied/i, 'anon read membership_requests');
+  });
+
+  // (9) S3 roster rules still hold under S4 (spot re-check: SEC-REV-27 closed for academy parents).
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, FIX.parentB]), 0, 'S3 still holds: an academy parent cannot enumerate a peer parent');
   });
 });

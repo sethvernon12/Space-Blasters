@@ -221,15 +221,39 @@ console.log('Cross-family isolation (new tables):')
   leaks === 0 ? ok('Dana (other family) reads 0 rows across groups/memberships/channels/events') : bad(`${leaks} cross-family group-graph leaks`)
 }
 
-// ---- C1 (0011): no bare group-id self-join into a group you don't own ----
-console.log('C1 — group-join requires ownership (no cross-family self-join):')
+// ---- C1 (EVOLVED to S4 distributed model): a parent adds their OWN child to any class;
+//      a cross-family ACTIVE add is still refused (can_write_child border UNCHANGED). ----
+console.log('C1 (S4) — distributed add: parent adds OWN child to any class; cross-family active add refused:')
 {
-  const danaJoin = (await S.dana.client.rpc('join_group', { p_group_id: mathClass, p_member_child_id: CID.Wren, p_member_actor_id: null, p_role: 'member' })).data
-  const sethJoin = (await S.seth.client.rpc('join_group', { p_group_id: betaClass, p_member_child_id: CID.Brielle, p_member_actor_id: null, p_role: 'member' })).data
-  const leaked = (await q(`select count(*)::int n from public.memberships where (group_id=$1 and member_child_id=$2) or (group_id=$3 and member_child_id=$4)`, [mathClass, CID.Wren, betaClass, CID.Brielle])).rows[0].n
-  danaJoin?.error === 'not_authorized' && sethJoin?.error === 'not_authorized' && leaked === 0
-    ? ok('Dana cannot join Wren into Seth\'s class; Seth cannot join Brielle into Dana\'s class; no membership created')
-    : bad(`self-join: dana=${JSON.stringify(danaJoin)} seth=${JSON.stringify(sethJoin)} leaked=${leaked}`)
+  const roseClass = (await S.rose.client.rpc('create_group', { p_purpose: 'class', p_name: 'Rose Distributed' })).data?.group_id
+  // Dana adds her OWN child (Wren) to Rose's class — a class she does NOT own → ACTIVE (distributed easy-in)
+  const danaOwn = (await S.dana.client.rpc('join_group', { p_group_id: roseClass, p_member_child_id: CID.Wren, p_member_actor_id: null, p_role: 'member' })).data
+  // but Dana CANNOT actively add a CROSS-FAMILY child (Brielle, Seth's) — can_write_child border intact
+  const danaCross = (await S.dana.client.rpc('join_group', { p_group_id: roseClass, p_member_child_id: CID.Brielle, p_member_actor_id: null, p_role: 'member' })).data
+  const wrenIn = (await q(`select count(*)::int n from public.memberships where group_id=$1 and member_child_id=$2 and active`, [roseClass, CID.Wren])).rows[0].n
+  const brielleIn = (await q(`select count(*)::int n from public.memberships where group_id=$1 and member_child_id=$2`, [roseClass, CID.Brielle])).rows[0].n
+  roseClass && danaOwn?.ok && wrenIn === 1 && danaCross?.error === 'not_authorized' && brielleIn === 0
+    ? ok('S4: Dana adds her OWN child to Rose\'s class (active, distributed); a cross-family active add (Brielle) is refused (can_write_child border intact)')
+    : bad(`C1 distributed: danaOwn=${JSON.stringify(danaOwn)} wrenIn=${wrenIn} danaCross=${JSON.stringify(danaCross)} brielleIn=${brielleIn}`)
+}
+
+// ---- S4 request/confirm (crown jewel e2e): a leader requests a cross-family child → HELD (no
+//      membership); the requester cannot self-confirm; the child's OWN parent sees it + confirms. ----
+console.log('S4 — cross-family request → HELD → parent confirms:')
+{
+  const rClass = (await S.rose.client.rpc('create_group', { p_purpose: 'class', p_name: 'Rose Request' })).data?.group_id
+  const rq = (await S.rose.client.rpc('request_add', { p_group_id: rClass, p_member_child_id: CID.Wren })).data
+  const heldMem = (await q(`select count(*)::int n from public.memberships where group_id=$1 and member_child_id=$2`, [rClass, CID.Wren])).rows[0].n
+  const roseConf = (await S.rose.client.rpc('confirm_add', { p_request_id: rq?.request_id })).data     // requester cannot self-confirm
+  const danaSees = (await S.dana.client.rpc('my_pending_add_requests')).data ?? []
+  const sethSees = (await S.seth.client.rpc('my_pending_add_requests')).data ?? []                     // other family sees nothing
+  const danaConf = (await S.dana.client.rpc('confirm_add', { p_request_id: rq?.request_id })).data
+  const nowMem = (await q(`select count(*)::int n from public.memberships where group_id=$1 and member_child_id=$2 and active`, [rClass, CID.Wren])).rows[0].n
+  rq?.ok && heldMem === 0 && roseConf?.error === 'not_authorized'
+    && danaSees.some((r) => r.id === rq.request_id) && !sethSees.some((r) => r.id === rq.request_id)
+    && danaConf?.ok && nowMem === 1
+    ? ok('S4: cross-family request HELD (no membership); requester cannot self-confirm; only the child\'s parent sees it + confirms → active')
+    : bad(`S4 req/confirm: rq=${JSON.stringify(rq)} heldMem=${heldMem} roseConf=${JSON.stringify(roseConf)} danaSees=${danaSees.length} sethSees=${sethSees.length} danaConf=${JSON.stringify(danaConf)} nowMem=${nowMem}`)
 }
 
 // ---- C2 (0011) adversarial: an in-group ADULT co-member from ANOTHER family ----

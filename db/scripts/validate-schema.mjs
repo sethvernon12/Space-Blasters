@@ -62,9 +62,11 @@ if (!process.argv.includes('--static')) {
                         'groups', 'memberships', 'channels', 'channel_members', 'events',
                         'suppressions', 'derivation_rules', 'derivation_outbox',
                         // S3b (0042): the academy staff background-check clearance surface
-                        'academy_staff_clearances'];
+                        'academy_staff_clearances',
+                        // S4 (0043): the pending cross-family add lane (RPC-only; no membership)
+                        'membership_requests'];
     // deny-by-default tables that intentionally have ZERO policies (definer/service only)
-    const NO_CLIENT_TABLES = ['rpc_rate_limits', 'derivation_outbox', 'academy_staff_clearances'];
+    const NO_CLIENT_TABLES = ['rpc_rate_limits', 'derivation_outbox', 'academy_staff_clearances', 'membership_requests'];
 
     const rls = await db.client.query(
       `select relname, relrowsecurity, relforcerowsecurity

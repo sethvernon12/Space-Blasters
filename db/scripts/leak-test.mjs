@@ -600,21 +600,37 @@ test('S0(a): group graph cross-family isolated; membership is NOT child-data dis
   });
 });
 
-// S0 · fact (b): tutor_grants cannot yet carry a provenance-distinct, group-scoped
-// grant without collision — UNIQUE(tutor_id, child_id) blocks a second (group_derived)
-// grant alongside a parent_direct one → the S5a migration is NEEDED (surfaced now).
-test('S0(b): tutor_grants UNIQUE(tutor_id,child_id) blocks a provenance-distinct grant → S5a needed', async () => {
+// S0 · fact (b) [S5a-updated]: provenance now lets a group_derived grant COEXIST with a
+// parent_direct one for the same tutor+child (two DISJOINT partial unique indexes); a 2nd
+// parent_direct or a 2nd (tutor,child,group) still collides; and the group_derived-IFF-group CHECK holds.
+test('S0(b) [S5a]: parent_direct + group_derived grants coexist; both uniqueness keys + the CHECK behave', async () => {
   const tutorX = '0000f00d-0000-4000-8000-000000000001';
-  // grant #1 = a parent_direct grant (granted_by = the child's own parent A)
+  const g1 = (await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','S0b G1',$1) returning id`, [FIX.parentA])).rows[0].id;
+  const g2 = (await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','S0b G2',$1) returning id`, [FIX.parentA])).rows[0].id;
+  // parent_direct (default origin) + a group_derived grant for the SAME tutor+child → COEXIST (was blocked pre-S5a)
   await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [tutorX, FIX.childA1, FIX.parentA]);
-  // grant #2 = a PROVENANCE-DISTINCT (e.g. group_derived) grant for the SAME tutor+child, granted_by
-  // a different actor — it STILL collides under today's UNIQUE(tutor_id, child_id): the schema has no
-  // room for two distinct-origin grants on one pair. This is the S5a signal.
-  await assert.rejects(
-    db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [tutorX, FIX.childA1, FIX.parentB]),
-    /duplicate key|unique/i,
-    'a provenance-distinct grant for the same tutor+child collides on UNIQUE(tutor_id,child_id) — S5a must add origin + origin_group_id, move the uniqueness key, and ref-count');
-  await db.client.query(`delete from public.tutor_grants where tutor_id=$1`, [tutorX]); // cleanup the throwaway
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, [tutorX, FIX.childA1, FIX.parentA, g1]);
+  assert.equal((await db.client.query(`select count(*)::int n from public.tutor_grants where tutor_id=$1 and child_id=$2`, [tutorX, FIX.childA1])).rows[0].n, 2, 'parent_direct + group_derived coexist (2 rows, no collision)');
+  // a 2nd parent_direct → collides on tutor_grants_parent_direct_uniq
+  await assert.rejects(db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [tutorX, FIX.childA1, FIX.parentB]), /duplicate key|unique/i, 'a 2nd parent_direct grant still collides');
+  // a 2nd group_derived for the SAME (tutor,child,group) → collides on tutor_grants_group_derived_uniq
+  await assert.rejects(db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, [tutorX, FIX.childA1, FIX.parentB, g1]), /duplicate key|unique/i, 'a 2nd group_derived for the same (tutor,child,group) collides');
+  // a group_derived for a DIFFERENT group → coexists (ref-count by multiplicity)
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, [tutorX, FIX.childA1, FIX.parentA, g2]);
+  assert.equal((await db.client.query(`select count(*)::int n from public.tutor_grants where tutor_id=$1 and child_id=$2`, [tutorX, FIX.childA1])).rows[0].n, 3, 'a second group (g2) adds a third coexisting grant');
+  // the CHECK: group_derived REQUIRES a group; parent_direct FORBIDS one
+  await assert.rejects(db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin) values ($1,$2,$3,true,'group_derived')`, ['0000f00d-0000-4000-8000-000000000009', FIX.childA1, FIX.parentA]), /origin_group_ck|check constraint/i, 'group_derived with NULL origin_group_id rejected by the CHECK');
+  await assert.rejects(db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'parent_direct',$4)`, ['0000f00d-0000-4000-8000-00000000000a', FIX.childA1, FIX.parentA, g1]), /origin_group_ck|check constraint/i, 'parent_direct with a non-NULL origin_group_id rejected by the CHECK');
+  // the EXACT redeem_invitation (0044) upsert clause is valid + upserts (insert→update, stays ONE row)
+  const tUp = '0000f00d-0000-4000-8000-00000000000b';
+  const UPS = `insert into public.tutor_grants (tutor_id, child_id, granted_by, can_write, active) values ($1,$2,$3,$4,true)
+               on conflict (tutor_id, child_id) where origin='parent_direct' do update set can_write=excluded.can_write`;
+  await db.client.query(UPS, [tUp, FIX.childB1, FIX.parentB, false]);
+  await db.client.query(UPS, [tUp, FIX.childB1, FIX.parentB, true]);
+  const up = (await db.client.query(`select count(*)::int n, bool_and(can_write) w from public.tutor_grants where tutor_id=$1 and child_id=$2`, [tUp, FIX.childB1])).rows[0];
+  assert.deepEqual({ n: up.n, w: up.w }, { n: 1, w: true }, 'redeem_invitation upsert clause: on conflict (tutor,child) where origin=parent_direct → update, ONE row');
+  await db.client.query(`delete from public.tutor_grants where tutor_id = any($1)`, [[tutorX, tUp]]);   // cleanup committed rows
+  await db.client.query(`delete from public.groups where id = any($1)`, [[g1, g2]]);
 });
 
 // S0 · fact (c): purge_child cascades EVERY child-keyed group table + tutor_grants,
@@ -631,6 +647,7 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   const trigEv = (await db.client.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3, jsonb_build_object('action','join')) returning id`, [np, kid, g])).rows[0].id;
   await db.client.query(`insert into public.derivation_outbox (trigger_event_id, kind, group_id, member_child_id, role, status, idempotency_key) values ($1,'join',$2,$3,'member','pending',$4)`, [trigEv, g, kid, 's0:' + kid]);
   await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, ['0000f00d-0000-4000-8000-000000000002', kid, np]);
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, ['0000f00d-0000-4000-8000-000000000003', kid, np, g]);  // S5a: purge must delete BOTH origins
   await db.client.query(`insert into public.membership_requests (group_id, member_child_id, requested_by, status) values ($1,$2,$3,'pending')`, [g, kid, np]);  // S4: RESTRICT → purge_child must delete it
 
   const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id'], ['membership_requests', 'member_child_id']];
@@ -1101,4 +1118,59 @@ test('S4c: request-lane borders, idempotent request, reversible decline/cancel; 
   await as('authenticated', FIX.parentA, async (c) => {
     assert.equal(await count(c, 'select 1 from public.memberships where group_id=$1 and member_actor_id=$2', [S3.academyA, FIX.parentB]), 0, 'S3 still holds: an academy parent cannot enumerate a peer parent');
   });
+});
+
+// ============================================================================
+// GROUP ENGINE · S5a — GRANT PROVENANCE (0044). Table-prep: can_view_child stays byte-for-byte
+// (is_my_child OR EXISTS active grant), origin-agnostic; ref-count is realized by row multiplicity
+// (one group_derived grant per justifying group); the client forge (origin='group_derived') is closed.
+// Grants seeded via db.client (owner) stand in for the S5b server-side mint path.
+// ============================================================================
+test('S5a: can_view_child origin-agnostic; ref-count by multiplicity; client forge closed; parent_direct client insert preserved', async () => {
+  const tutP = '0000fa5a-0000-4000-8000-000000000001';   // parent_direct grant only
+  const tutG = '0000fa5a-0000-4000-8000-000000000002';   // group_derived grant only
+  const tutB = '0000fa5a-0000-4000-8000-000000000003';   // BOTH
+  const tutR = '0000fa5a-0000-4000-8000-000000000004';   // ref-count: two group_derived (two groups)
+  const gA = (await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','S5a gA',$1) returning id`, [FIX.parentA])).rows[0].id;
+  const gB = (await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','S5a gB',$1) returning id`, [FIX.parentA])).rows[0].id;
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [tutP, FIX.childA1, FIX.parentA]);
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, [tutG, FIX.childA1, FIX.parentA, gA]);
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [tutB, FIX.childA1, FIX.parentA]);
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, [tutB, FIX.childA1, FIX.parentA, gA]);
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4),($1,$2,$3,true,'group_derived',$5)`, [tutR, FIX.childA1, FIX.parentA, gA, gB]);
+
+  // (5) origin-agnostic: can_view_child true via parent_direct-only, group_derived-only, and both.
+  for (const [t, label] of [[tutP, 'parent_direct only'], [tutG, 'group_derived only'], [tutB, 'both']]) {
+    await as('authenticated', t, async (c) => {
+      assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, `can_view_child true via ${label} grant`);
+      assert.equal(await count(c, 'select 1 from public.children where id=$1', [FIX.childA1]), 1, `tutor sees the child via ${label}`);
+    });
+  }
+
+  // (6) ref-count by multiplicity: tutR has two group grants (gA, gB). Revoke gA → still true; revoke gB → false.
+  await as('authenticated', tutR, async (c) => {
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'two justifying group grants → can_view_child true');
+  });
+  await db.client.query(`update public.tutor_grants set active=false, revoked_at=now() where tutor_id=$1 and origin_group_id=$2`, [tutR, gA]);
+  await as('authenticated', tutR, async (c) => {
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'revoke ONE group grant → access RETAINED (the other still justifies)');
+  });
+  await db.client.query(`update public.tutor_grants set active=false, revoked_at=now() where tutor_id=$1 and origin_group_id=$2`, [tutR, gB]);
+  await as('authenticated', tutR, async (c) => {
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'revoke the LAST justifying grant → access DROPS (no lingering)');
+  });
+
+  // (7) the CLIENT FORGE is CLOSED: a parent cannot client-insert a group_derived grant; parent_direct still works.
+  await as('authenticated', FIX.parentA, async (c) => {
+    await rejects(c, `insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`,
+      ['0000fa5a-0000-4000-8000-0000000000ff', FIX.childA1, FIX.parentA, gA], /row-level security|policy/i, 'a parent CANNOT client-forge a group_derived grant (RLS WITH CHECK origin=parent_direct)');
+    assert.equal((await c.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true) returning id`, ['0000fa5a-0000-4000-8000-0000000000fe', FIX.childA1, FIX.parentA])).rowCount, 1,
+      'a parent CAN still client-insert a parent_direct grant (behavior preserved)');
+    // and a parent CANNOT client-manage a group_derived grant (system-managed): the update policy hides it → 0 rows.
+    const upd = await c.query(`update public.tutor_grants set active=true, revoked_at=null where tutor_id=$1 and child_id=$2`, [tutG, FIX.childA1]);
+    assert.equal(upd.rowCount, 0, 'a parent CANNOT client-update a group_derived grant (update policy scoped to parent_direct)');
+  });
+
+  await db.client.query(`delete from public.tutor_grants where tutor_id = any($1)`, [[tutP, tutG, tutB, tutR]]);   // cleanup committed rows
+  await db.client.query(`delete from public.groups where id = any($1)`, [[gA, gB]]);
 });

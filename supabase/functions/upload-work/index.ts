@@ -90,8 +90,11 @@ Deno.serve(async (req) => {
   if (!kid) return json({ error: 'not_found' }, 404)
   let canWrite = kid.parent_id === uid
   if (!canWrite) {
-    const { data: g } = await service.from('tutor_grants').select('can_write').eq('tutor_id', uid).eq('child_id', childId).eq('active', true).maybeSingle()
-    canWrite = !!g?.can_write
+    // multiplicity-tolerant (S5a): a tutor may hold >1 active grant for a child (a parent_direct grant
+    // plus per-group group_derived grants) — authorize if ANY active grant is writable, mirroring the
+    // can_write_child SQL gate (EXISTS active AND can_write). maybeSingle() would 406/PGRST116 on 2+ rows.
+    const { data: g } = await service.from('tutor_grants').select('can_write').eq('tutor_id', uid).eq('child_id', childId).eq('active', true)
+    canWrite = Array.isArray(g) && g.some((row) => row.can_write)
   }
   if (kid.auth_user_id === uid) canWrite = false
   if (!canWrite) return json({ error: 'not_authorized' }, 403)

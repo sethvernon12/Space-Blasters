@@ -310,6 +310,25 @@ console.log('S3 (leader sees roster; co-member narrowed; academy staff discover 
     : bad(`S3b crown jewel: nameTheo=${names.includes('Theo')} child=${roseTheoChild.length} attempts=${roseTheoAttempts.length}`)
 }
 
+// ---- S5b (crown jewel e2e): a VERIFIED standalone leader gains the WORK view via co-mint ----
+console.log('S5b — verified leader gains the work-view when a parent adds their child (co-mint via the drain):')
+{
+  const rClass = (await S.rose.client.rpc('create_group', { p_purpose: 'class', p_name: 'Rose S5b' })).data?.group_id
+  await q(`insert into public.standalone_leader_clearances (actor_id, completed_at) values ($1, now()) on conflict (actor_id, check_kind) do nothing`, [uids.rose])  // Rose ID-verified
+  const before = (await S.rose.client.from('children').select('id').eq('id', CID.Theo)).data?.length ?? 0   // Rose has NO prior grant for Theo (only Brielle)
+  await S.seth.client.rpc('join_group', { p_group_id: rClass, p_member_child_id: CID.Theo, p_member_actor_id: null, p_role: 'member' })  // Seth adds his OWN child
+  await drain()  // co-mint fires in the drain
+  const grant = (await q(`select count(*)::int n from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived' and origin_group_id=$3 and active`, [uids.rose, CID.Theo, rClass])).rows[0].n
+  const after = (await S.rose.client.from('children').select('id').eq('id', CID.Theo)).data?.length ?? 0
+  const disc = (await q(`select count(*)::int n from public.consent_ledger where child_id=$1 and action='disclosure' and detail->>'origin'='group_derived'`, [CID.Theo])).rows[0].n
+  // leave → synchronous revoke → Rose loses the view again
+  await S.seth.client.rpc('leave_group', { p_group_id: rClass, p_member_child_id: CID.Theo, p_member_actor_id: null })
+  const afterLeave = (await S.rose.client.from('children').select('id').eq('id', CID.Theo)).data?.length ?? 0
+  before === 0 && grant === 1 && after === 1 && disc >= 1 && afterLeave === 0
+    ? ok('S5b: verified leader gains the work-view (group_derived co-mint, audited disclosure) on parent-add; loses it (synchronous cut) on leave')
+    : bad(`S5b co-mint: before=${before} grant=${grant} after=${after} disc=${disc} afterLeave=${afterLeave}`)
+}
+
 await db.end()
 console.log(fails ? `\n=== RM-07: ${fails} FAIL ===` : '\n=== RM-07: ALL PASS ===')
 process.exit(fails ? 1 : 0)

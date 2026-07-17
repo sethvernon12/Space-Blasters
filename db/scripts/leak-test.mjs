@@ -1174,3 +1174,224 @@ test('S5a: can_view_child origin-agnostic; ref-count by multiplicity; client for
   await db.client.query(`delete from public.tutor_grants where tutor_id = any($1)`, [[tutP, tutG, tutB, tutR]]);   // cleanup committed rows
   await db.client.query(`delete from public.groups where id = any($1)`, [[gA, gB]]);
 });
+
+// ============================================================================
+// GROUP ENGINE · S5b — CO-MINT / REVOKE RECONCILE (0045). A VERIFIED leader gains the
+// WORK view (can_view_child) when a parent-authorized ACTIVE membership lands, via a
+// RECONCILED PROJECTION of membership truth in the drain (order-insensitive); revoked
+// (audited, synchronous) on membership-end. Write flows run in ONE as()-txn: writes as
+// authenticated, `reset role` → superuser to run the drain, assert as the leader/parent.
+// ============================================================================
+const S5B = {
+  standClass:  '0000513b-0000-4000-8000-000000000001',   // standalone class, VERIFIED leader
+  standLeader: '0000513b-0000-4000-8000-0000000000c1',
+  standClass2: '0000513b-0000-4000-8000-000000000002',   // second class, SAME verified leader (ref-count)
+  unverClass:  '0000513b-0000-4000-8000-000000000003',   // standalone class, UNVERIFIED leader
+  unverLeader: '0000513b-0000-4000-8000-0000000000c3',
+  acadClass:   '0000513b-0000-4000-8000-000000000004',   // academy-attached class (org_id=academyA), leader=staffCleared (background-checked)
+};
+async function seedS5b(client) {
+  await seedAcademy(client);
+  await client.query(`insert into public.standalone_leader_clearances (actor_id, completed_at) values ($1, now()) on conflict (actor_id, check_kind) do nothing`, [S5B.standLeader]);
+  for (const [g, n] of [[S5B.standClass, 'S5b Stand'], [S5B.standClass2, 'S5b Stand2']]) {
+    await client.query(`insert into public.groups (id, purpose, name, created_by) values ($1,'class',$2,$3) on conflict (id) do nothing`, [g, n, S5B.standLeader]);
+    await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [g, S5B.standLeader]);
+  }
+  await client.query(`insert into public.groups (id, purpose, name, created_by) values ($1,'class','S5b Unver',$2) on conflict (id) do nothing`, [S5B.unverClass, S5B.unverLeader]);
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S5B.unverClass, S5B.unverLeader]);
+  // academy-attached class (org_id=academyA) led by the BACKGROUND-CHECKED academy staff (S3.staffCleared)
+  await client.query(`insert into public.groups (id, purpose, name, org_id, created_by) values ($1,'class','S5b Acad',$2,$3) on conflict (id) do nothing`, [S5B.acadClass, S3.academyA, S3.staffCleared]);
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S5B.acadClass, S3.staffCleared]);
+}
+// drain as superuser, then return to an authenticated probe as `sub`
+const drainAs = async (c, sub) => { await c.query('reset role'); await c.query('select public.drain_derivations()'); await c.query('set local role authenticated'); if (sub) await be(c, sub); };
+
+test('S5b-a: co-mint on join for a VERIFIED leader; unverified→no view; held/cross-family→no grant', async () => {
+  await seedS5b(db.client);
+  // (1) verified standalone leader gains the WORK view after a parent adds their own child + drain
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await drainAs(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'verified leader gains can_view_child after co-mint');
+    assert.equal((await c.query('select public.can_write_child($1) v', [FIX.childA1])).rows[0].v, true, 'the group_derived grant is writable (leaders grade/annotate)');
+    assert.equal(await count(c, `select 1 from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived' and origin_group_id=$3 and active`, [S5B.standLeader, FIX.childA1, S5B.standClass]), 1, 'one active group_derived grant minted');
+    await c.query('reset role');
+    assert.ok((await c.query(`select count(*)::int n from public.consent_ledger where child_id=$1 and action='disclosure' and detail->>'origin'='group_derived' and (detail->>'origin_group_id')=$2`, [FIX.childA1, S5B.standClass])).rows[0].n >= 1, 'a provenance-complete group_derived disclosure ledger row was written');
+  });
+  // (2) UNVERIFIED standalone leader → NO work-view (co-mint gated on verification)
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.unverClass, FIX.childA2]);
+    await drainAs(c, S5B.unverLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA2])).rows[0].v, false, 'UNVERIFIED standalone leader gets NO work-view');
+  });
+  // (3) HELD no-consent child → drain holds → NO co-mint
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA3]);   // childA3 has NO consent
+    await drainAs(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA3])).rows[0].v, false, 'a no-consent child → drain HELD → no co-mint');
+  });
+  // (4) cross-family PENDING request → no membership → no co-mint
+  await as('authenticated', S5B.standLeader, async (c) => {
+    await c.query(`select public.request_add($1,$2) r`, [S5B.standClass, FIX.childB1]);   // parentB's child (cross-family)
+    await drainAs(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childB1])).rows[0].v, false, 'a cross-family pending request → no membership → no co-mint');
+  });
+});
+
+test('S5b-b: synchronous leave cut (immediate + audited); ref-count over two classes; re-add re-discloses', async () => {
+  await seedS5b(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass2, FIX.childA1]);
+    await drainAs(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'two class memberships → work-view');
+    assert.equal(await count(c, `select 1 from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived' and active`, [S5B.standLeader, FIX.childA1]), 2, 'two active group_derived grants (one per class)');
+    // leave ONE class → SYNCHRONOUS cut of that grant; access RETAINED via the other (no drain)
+    await be(c, FIX.parentA);
+    await c.query(`select public.leave_group($1,$2,null)`, [S5B.standClass, FIX.childA1]);
+    await be(c, S5B.standLeader);
+    assert.equal(await count(c, `select 1 from public.tutor_grants where tutor_id=$1 and origin_group_id=$2 and active`, [S5B.standLeader, S5B.standClass]), 0, 'the left class grant is revoked SYNCHRONOUSLY (no drain)');
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'ref-count: access RETAINED via the still-active second class');
+    // leave the SECOND → access DROPS immediately
+    await be(c, FIX.parentA);
+    await c.query(`select public.leave_group($1,$2,null)`, [S5B.standClass2, FIX.childA1]);
+    await be(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'leaving the LAST justifying class → access DROPS immediately (synchronous cut)');
+    await c.query('reset role');
+    assert.ok((await c.query(`select count(*)::int n from public.consent_ledger where child_id=$1 and action='revoke' and detail->>'origin'='group_derived'`, [FIX.childA1])).rows[0].n >= 2, 'each leave wrote an audited group_derived revoke ledger row');
+  });
+  // re-add re-discloses (fresh disclosure, not a silent reactivation)
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await drainAs(c);
+    await c.query(`select public.leave_group($1,$2,null)`, [S5B.standClass, FIX.childA1]);   // revoke
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);  // re-add
+    await c.query('reset role'); await c.query('select public.drain_derivations()');
+    assert.ok((await c.query(`select count(*)::int n from public.consent_ledger where child_id=$1 and action='disclosure' and detail->>'origin'='group_derived' and (detail->>'origin_group_id')=$2`, [FIX.childA1, S5B.standClass])).rows[0].n >= 2, 're-add wrote a FRESH disclosure ledger row (not a silent reactivation) — HARD RULE #7');
+  });
+});
+
+test('S5b-c: reconcile-to-truth ignores a stale/reordered event; null-parent no-wedge; consent-filter', async () => {
+  await seedS5b(db.client);
+  // (churn/reorder REGRESSION) a stale LEAVE event while the membership is STILL ACTIVE → grant stays active
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await c.query('reset role'); await c.query('select public.drain_derivations()');   // co-mint
+    const staleEv = (await c.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3, jsonb_build_object('action','leave')) returning id`, [S5B.standLeader, FIX.childA1, S5B.standClass])).rows[0].id;
+    await c.query(`insert into public.derivation_outbox (trigger_event_id, kind, group_id, member_child_id, role, status, idempotency_key)
+                   values ($1,'leave',$2,$3,'member','pending','stale-leave-a1')`, [staleEv, S5B.standClass, FIX.childA1]);   // STALE leave, membership still active
+    await c.query('select public.drain_derivations()');
+    await c.query('set local role authenticated'); await be(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true,
+      'reconcile-to-truth: a stale LEAVE with the membership still ACTIVE does NOT revoke (a naive revoke-on-leave would) — grant follows membership truth');
+  });
+  // (null-parent NO-WEDGE) a consented child with parent_id NULL is skipped; the drain still processes a normal child
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query('reset role');
+    const npc = '0000513b-0000-4000-8000-0000000000f1', npLogin = '0000513b-0000-4000-8000-0000000000f2';
+    await c.query(`insert into public.children (id, parent_id, auth_user_id, nickname, grade_band) values ($1, null, $2, 'NullPar', 'K')`, [npc, npLogin]);
+    const cid = (await c.query(`insert into public.consent_ledger (parent_id, child_id, action, method, policy_version) values ($1,$2,'grant','other_vpc','x') returning id`, [npLogin, npc])).rows[0].id;
+    await c.query(`update public.children set consent_id=$1 where id=$2`, [cid, npc]);   // consented but parent_id NULL
+    await c.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true), ($1,$3,'member',true) on conflict do nothing`, [S5B.standClass, npc, FIX.childA1]);
+    const evNp = (await c.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3,'{}'::jsonb) returning id`, [npLogin, npc, S5B.standClass])).rows[0].id;
+    const evNorm = (await c.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3,'{}'::jsonb) returning id`, [FIX.parentA, FIX.childA1, S5B.standClass])).rows[0].id;
+    await c.query(`insert into public.derivation_outbox (trigger_event_id, kind, group_id, member_child_id, role, status, idempotency_key) values
+                   ($1,'join',$3,$4,'member','pending','np-join-key'), ($2,'join',$3,$5,'member','pending','norm-join-key')`, [evNp, evNorm, S5B.standClass, npc, FIX.childA1]);
+    const r = (await c.query('select public.drain_derivations() r')).rows[0].r;
+    assert.ok(r.processed >= 2, 'drain COMPLETED both rows (no poison-pill wedge on the null-parent child)');
+    assert.equal((await c.query(`select count(*)::int n from public.tutor_grants where child_id=$1 and origin='group_derived'`, [npc])).rows[0].n, 0, 'null-parent child: NO co-mint (skipped, no wedge)');
+    assert.equal((await c.query(`select count(*)::int n from public.tutor_grants where child_id=$1 and origin_group_id=$2 and active`, [FIX.childA1, S5B.standClass])).rows[0].n, 1, 'a NORMAL child in the same drain still got its grant (drain did not wedge)');
+  });
+  // (CONSENT FILTER — the leader-join fan-out relies on it) reconcile a NO-CONSENT member → no mint
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query('reset role');
+    await c.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true) on conflict do nothing`, [S5B.standClass, FIX.childA3]);  // childA3 NO consent
+    await c.query(`select public.reconcile_group_grant($1,$2)`, [S5B.standClass, FIX.childA3]);
+    assert.equal((await c.query(`select count(*)::int n from public.tutor_grants where child_id=$1 and origin='group_derived'`, [FIX.childA3])).rows[0].n, 0, 'reconcile refuses to mint for a no-consent member (the leader-join fan-out inherits this filter)');
+  });
+});
+
+test('S5b-d: re-drivers (consent-grant + clearance) retroactively mint; de-verification revokes; union access', async () => {
+  await seedS5b(db.client);
+  // (CONSENT-GRANT RE-DRIVER) child added before consent → held; consent lands → the children trigger reconciles → co-mint
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA3]);   // childA3 no consent → active membership, held derivation
+    await drainAs(c);
+    await c.query('reset role');
+    const cid = (await c.query(`insert into public.consent_ledger (parent_id, child_id, action, method, policy_version) values ($1,$2,'grant','other_vpc','x') returning id`, [FIX.parentA, FIX.childA3])).rows[0].id;
+    await c.query(`update public.children set consent_id=$1 where id=$2`, [cid, FIX.childA3]);   // consent lands → trigger → redrive → reconcile
+    await c.query('set local role authenticated'); await be(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA3])).rows[0].v, true, 'consent-grant RE-DRIVER retroactively co-mints a consented-after-join child');
+  });
+  // (CLEARANCE RE-DRIVER) child in the UNVERIFIED class; the leader gets a clearance → retroactive co-mint; then de-verify → revoke
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.unverClass, FIX.childA1]);
+    await drainAs(c, S5B.unverLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'before verification: no work-view');
+    await c.query('reset role');
+    await c.query(`insert into public.standalone_leader_clearances (actor_id, completed_at) values ($1, now()) on conflict (actor_id, check_kind) do update set completed_at=now(), revoked_at=null`, [S5B.unverLeader]);  // clearance lands → trigger → redrive
+    await c.query('set local role authenticated'); await be(c, S5B.unverLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'clearance-completion RE-DRIVER retroactively co-mints for a verified-after-join leader');
+    // DE-VERIFY → the grant is revoked (verification also gates existing rows via reconcile)
+    await c.query('reset role');
+    await c.query(`update public.standalone_leader_clearances set revoked_at=now() where actor_id=$1`, [S5B.unverLeader]);  // de-verify → trigger → redrive → revoke
+    await c.query('set local role authenticated'); await be(c, S5B.unverLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'de-verifying the leader (clearance revoked) REVOKES the group_derived grant');
+  });
+  // (UNION ACCESS) a child with BOTH a parent_direct AND a group_derived grant → revoking parent_direct does NOT sever
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await drainAs(c);
+    await c.query('reset role');
+    await c.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, [S5B.standLeader, FIX.childA1, FIX.parentA]);  // a parent_direct grant too
+    // parent revokes the parent_direct grant (client update, origin='parent_direct')
+    await c.query('set local role authenticated'); await be(c, FIX.parentA);
+    await c.query(`update public.tutor_grants set active=false, revoked_at=now() where tutor_id=$1 and child_id=$2 and origin='parent_direct'`, [S5B.standLeader, FIX.childA1]);
+    await be(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'union access: revoking parent_direct does NOT sever the active group_derived grant (leader keeps access via the group)');
+  });
+});
+
+test('S5b-e: academy-path co-mint (background-checked staff); de-verify via clearance AND via membership removal', async () => {
+  await seedS5b(db.client);
+  // (academy branch) parentA (enrolled) adds childA1 to the academy-attached class led by the BACKGROUND-CHECKED staff
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.acadClass, FIX.childA1]);
+    await drainAs(c, S3.staffCleared);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'academy branch: a background-checked staff leader (is_academy_staff) gains the work-view');
+  });
+  // (de-verify via CLEARANCE revoke) → the clearance trigger re-drives → grant revoked
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.acadClass, FIX.childA1]);
+    await drainAs(c);
+    await c.query('reset role');
+    await c.query(`update public.academy_staff_clearances set revoked_at=now() where academy_group_id=$1 and actor_id=$2`, [S3.academyA, S3.staffCleared]);
+    await c.query('set local role authenticated'); await be(c, S3.staffCleared);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'de-verify via background-check REVOKE → group_derived grant revoked (clearance re-driver)');
+  });
+  // (de-verify via ACADEMY MEMBERSHIP removal — SHOULD-FIX 1) → the memberships re-driver → grant revoked
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.acadClass, FIX.childA1]);
+    await drainAs(c);
+    await c.query('reset role');
+    await c.query(`update public.memberships set active=false where group_id=$1 and member_actor_id=$2`, [S3.academyA, S3.staffCleared]);   // remove from academy staff
+    await c.query('set local role authenticated'); await be(c, S3.staffCleared);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'SHOULD-FIX 1: removing the academy staff MEMBERSHIP revokes the lingering class work-grant (no linger)');
+  });
+});
+
+test('S5b-f: SHOULD-FIX 2 — a delegated writer cannot place a child into a stranger’s class (no work-disclosure)', async () => {
+  await seedS5b(db.client);
+  // parentA delegates a WRITABLE grant to a tutor T1 (client-inserted parent_direct, can_write). T1 is NOT a leader of standClass.
+  const t1 = '0000513b-0000-4000-8000-0000000000d1';
+  await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, can_write, active) values ($1,$2,$3,true,true) on conflict do nothing`, [t1, FIX.childA1, FIX.parentA]);
+  await as('authenticated', t1, async (c) => {
+    // T1 (can_write via the grant, but NOT childA1's parent) tries to add childA1 into standClass (led by standLeader, a stranger)
+    const r = (await c.query(`select public.join_group($1,$2,null,'member') r`, [S5B.standClass, FIX.childA1])).rows[0].r;
+    assert.equal(r.error, 'not_authorized', 'a delegated writer canNOT add a child to a stranger’s class (is_my_child tightening) → no co-mint to a leader the parent never chose');
+  });
+  // sanity: the PARENT can still add their own child to that same stranger’s class (easy-in preserved)
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S5B.standClass, FIX.childA1])).rows[0].r.ok, true, 'a PARENT adds their OWN child to any class/team (easy-in preserved)');
+  });
+});

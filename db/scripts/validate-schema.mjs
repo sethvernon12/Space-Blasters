@@ -66,7 +66,9 @@ if (!process.argv.includes('--static')) {
                         // S4 (0043): the pending cross-family add lane (RPC-only; no membership)
                         'membership_requests',
                         // S5b (0045): the standalone-leader ID-verification clearance surface
-                        'standalone_leader_clearances'];
+                        'standalone_leader_clearances',
+                        // S6 (0046): the adult-scoped removal/flag accountability record
+                        'membership_removals'];
     // deny-by-default tables that intentionally have ZERO policies (definer/service only)
     const NO_CLIENT_TABLES = ['rpc_rate_limits', 'derivation_outbox', 'academy_staff_clearances', 'membership_requests', 'standalone_leader_clearances'];
 

@@ -329,6 +329,25 @@ console.log('S5b — verified leader gains the work-view when a parent adds thei
     : bad(`S5b co-mint: before=${before} grant=${grant} after=${after} disc=${disc} afterLeave=${afterLeave}`)
 }
 
+// ---- S6 (careful-out removal ceremony): leader removes with a why-note; parent re-adds ----
+console.log('S6 — leader removal needs a why-note (recorded, adult-scoped); parent notified + re-adds:')
+{
+  const rClass = (await S.rose.client.rpc('create_group', { p_purpose: 'class', p_name: 'Rose S6' })).data?.group_id
+  await q(`insert into public.standalone_leader_clearances (actor_id, completed_at) values ($1, now()) on conflict (actor_id, check_kind) do nothing`, [uids.rose])
+  await S.seth.client.rpc('join_group', { p_group_id: rClass, p_member_child_id: CID.Theo, p_member_actor_id: null, p_role: 'member' })
+  await drain()
+  const noWhy = (await S.rose.client.rpc('remove_member', { p_group_id: rClass, p_member_child_id: CID.Theo, p_why_note: '' })).data
+  const removed = (await S.rose.client.rpc('remove_member', { p_group_id: rClass, p_member_child_id: CID.Theo, p_why_note: 'roster correction' })).data
+  const suppressed = (await q(`select active from public.memberships where group_id=$1 and member_child_id=$2`, [rClass, CID.Theo])).rows[0]?.active
+  const record = (await q(`select count(*)::int n from public.membership_removals where member_child_id=$1 and kind='removed'`, [CID.Theo])).rows[0].n
+  const sethSees = (await S.seth.client.from('events').select('id').eq('subject_child_id', CID.Theo).eq('group_id', rClass)).data ?? []
+  const reAdd = (await S.seth.client.rpc('join_group', { p_group_id: rClass, p_member_child_id: CID.Theo, p_member_actor_id: null, p_role: 'member' })).data
+  const backIn = (await q(`select active from public.memberships where group_id=$1 and member_child_id=$2`, [rClass, CID.Theo])).rows[0]?.active
+  noWhy?.error === 'why_required' && removed?.ok && suppressed === false && record === 1 && sethSees.length >= 1 && reAdd?.ok && backIn === true
+    ? ok('S6: leader removal needs a why-note (recorded); suppression not deletion; parent notified + re-adds (safety valve)')
+    : bad(`S6: noWhy=${JSON.stringify(noWhy)} removed=${JSON.stringify(removed)} suppressed=${suppressed} record=${record} sethSees=${sethSees.length} reAdd=${JSON.stringify(reAdd)} backIn=${backIn}`)
+}
+
 await db.end()
 console.log(fails ? `\n=== RM-07: ${fails} FAIL ===` : '\n=== RM-07: ALL PASS ===')
 process.exit(fails ? 1 : 0)

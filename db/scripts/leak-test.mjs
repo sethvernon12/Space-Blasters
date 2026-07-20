@@ -649,8 +649,9 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active) values ($1,$2,$3,true)`, ['0000f00d-0000-4000-8000-000000000002', kid, np]);
   await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, ['0000f00d-0000-4000-8000-000000000003', kid, np, g]);  // S5a: purge must delete BOTH origins
   await db.client.query(`insert into public.membership_requests (group_id, member_child_id, requested_by, status) values ($1,$2,$3,'pending')`, [g, kid, np]);  // S4: RESTRICT → purge_child must delete it
+  await db.client.query(`insert into public.membership_removals (kind, group_id, member_child_id, actor_id, note) values ('removed',$1,$2,$3,'S0 note')`, [g, kid, np]);  // S6: RESTRICT → purge_child must delete it
 
-  const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id'], ['membership_requests', 'member_child_id']];
+  const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id'], ['membership_requests', 'member_child_id'], ['membership_removals', 'member_child_id']];
   // BEFORE purge: each seeded table has the child's row — so zero-after is non-vacuous AND the
   // disposition-VALUE assertions below pin purge_child's OWN accounting (not just FK cascade).
   const seeded = {};
@@ -676,6 +677,7 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   assert.equal(del.derivation_outbox, seeded.derivation_outbox, 'receipt bucket: derivation_outbox');
   assert.equal(del.tutor_grants, seeded.tutor_grants, 'receipt bucket: tutor_grants');
   assert.equal(del.membership_requests, seeded.membership_requests, 'receipt bucket: membership_requests');
+  assert.equal(del.membership_removals, seeded.membership_removals, 'receipt bucket: membership_removals');
   assert.equal(del.subject_events, seededSubjEvents, 'receipt bucket: subject_events');
 });
 
@@ -1393,5 +1395,141 @@ test('S5b-f: SHOULD-FIX 2 — a delegated writer cannot place a child into a str
   // sanity: the PARENT can still add their own child to that same stranger’s class (easy-in preserved)
   await as('authenticated', FIX.parentA, async (c) => {
     assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S5B.standClass, FIX.childA1])).rows[0].r.ok, true, 'a PARENT adds their OWN child to any class/team (easy-in preserved)');
+  });
+});
+
+// ============================================================================
+// GROUP ENGINE · S6 — CAREFUL-OUT REMOVAL CEREMONY (0046). leave_group = parent 1-tap
+// (is_my_child); remove_member = leader/academy documented (why-note + confirm + parent-notify
+// + adult-scoped why-note); flag_member = a member flags for the leader. Removal = suppression,
+// never deletion; the parent is the always-available safety valve. Reuses the S5b synchronous cut.
+// ============================================================================
+test('S6-a: parent 1-tap (no why-note, re-addable); leader remove requires why-note+confirm, recorded, parent-notified', async () => {
+  await seedS5b(db.client);
+  // (1) PARENT 1-taps removal of own child → leave_group, no why-note, grant cut, suppressed, re-addable
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await drainAs(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'precondition: the leader has the work-view');
+    await be(c, FIX.parentA);
+    assert.equal((await c.query(`select public.leave_group($1,$2,null) r`, [S5B.standClass, FIX.childA1])).rows[0].r.ok, true, 'parent 1-taps leave_group (no why-note)');
+    await be(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'removal cut the grant synchronously');
+    await c.query('reset role');
+    assert.equal((await c.query(`select active from public.memberships where group_id=$1 and member_child_id=$2`, [S5B.standClass, FIX.childA1])).rows[0].active, false, 'membership SUPPRESSED (active=false, row persists) — not deleted');
+    assert.equal((await c.query(`select count(*)::int n from public.membership_removals where member_child_id=$1`, [FIX.childA1])).rows[0].n, 0, 'a parent 1-tap writes NO why-note record');
+    await c.query('set local role authenticated'); await be(c, FIX.parentA);
+    assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S5B.standClass, FIX.childA1])).rows[0].r.ok, true, 'parent re-adds (undo / safety valve)');
+  });
+  // (2) LEADER remove requires a why-note + confirm; recorded; parent-notified; re-addable
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await drainAs(c);
+    await be(c, S5B.standLeader);
+    assert.equal((await c.query(`select public.remove_member($1,$2,'') r`, [S5B.standClass, FIX.childA1])).rows[0].r.error, 'why_required', 'an EMPTY why-note is REJECTED (nothing changes)');
+    await c.query('reset role');
+    assert.equal((await c.query(`select active from public.memberships where group_id=$1 and member_child_id=$2`, [S5B.standClass, FIX.childA1])).rows[0].active, true, 'rejected removal: the membership is unchanged (still active)');
+    await c.query('set local role authenticated'); await be(c, S5B.standLeader);
+    assert.equal((await c.query(`select public.remove_member($1,$2,'disruptive behavior') r`, [S5B.standClass, FIX.childA1])).rows[0].r.ok, true, 'leader removes WITH a why-note → ok');
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, false, 'the leader’s grant is cut on removal');
+    await c.query('reset role');
+    assert.equal((await c.query(`select count(*)::int n from public.membership_removals where member_child_id=$1 and kind='removed' and note='disruptive behavior' and actor_id=$2`, [FIX.childA1, S5B.standLeader])).rows[0].n, 1, 'the why-note is RECORDED (accountability)');
+    await c.query('set local role authenticated'); await be(c, FIX.parentA);
+    assert.ok(await count(c, `select 1 from public.events where subject_child_id=$1 and group_id=$2 and payload->>'action'='removed'`, [FIX.childA1, S5B.standClass]) >= 1, 'the parent is NOTIFIED — reads the neutral removed event (DER-09)');
+    assert.equal((await c.query(`select public.join_group($1,$2,null,'member') r`, [S5B.standClass, FIX.childA1])).rows[0].r.ok, true, 'PARENT-SUPREME: the parent re-adds (a non-parent can never permanently sever)');
+  });
+});
+
+test('S6-b: authority boundaries — leader can’t 1-tap via leave_group; non-owner can’t remove; academy can', async () => {
+  await seedS5b(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    // a LEADER can NO LONGER 1-tap a child via leave_group (is_my_child only) — ceremony can’t be bypassed
+    await be(c, S5B.standLeader);
+    assert.equal((await c.query(`select public.leave_group($1,$2,null) r`, [S5B.standClass, FIX.childA1])).rows[0].r.error, 'not_authorized', 'a leader can NOT 1-tap a child via leave_group');
+    // a non-owner / non-academy (parentB) canNOT remove_member
+    await be(c, FIX.parentB);
+    assert.equal((await c.query(`select public.remove_member($1,$2,'x') r`, [S5B.standClass, FIX.childA1])).rows[0].r.error, 'not_authorized', 'a non-owner / non-academy CANNOT remove (authority boundary)');
+    // a leader canNOT remove from a group they do NOT lead
+    await be(c, S5B.standLeader);
+    assert.equal((await c.query(`select public.remove_member($1,$2,'x') r`, [S5B.unverClass, FIX.childA1])).rows[0].r.error, 'not_authorized', 'a leader cannot remove from a group they do NOT lead (cross-group border)');
+  });
+  // ACADEMY authority: the director removes a child from an academy class they don’t own (is_academy_staff)
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.acadClass, FIX.childA1]);
+    await drainAs(c);
+    await be(c, S3.director);
+    assert.equal((await c.query(`select public.remove_member($1,$2,'academy policy') r`, [S5B.acadClass, FIX.childA1])).rows[0].r.ok, true, 'the ACADEMY (is_academy_staff of the group’s academy) removes from a group in their academy');
+  });
+});
+
+test('S6-c: suppression-not-deletion; why-note adult-scoped (child can’t read); flag path; ref-count', async () => {
+  await seedS5b(db.client);
+  const coTutor = '0000513b-0000-4000-8000-0000000000e1';
+  await db.client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S5B.standClass, coTutor]);
+  // (suppression-not-deletion + why-note adult-scoped) leader removes childA1 (childA1 has a seeded attempt)
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await drainAs(c);
+    await be(c, S5B.standLeader);
+    await c.query(`select public.remove_member($1,$2,'secret reason')`, [S5B.standClass, FIX.childA1]);
+    // the CHILD (own login) cannot read the why-note (P7); the parent + leader can
+    await be(c, FIX.childA1Login);
+    assert.equal(await count(c, `select 1 from public.membership_removals where member_child_id=$1`, [FIX.childA1]), 0, 'the CHILD canNOT read the why-note (P7 — adult-scoped)');
+    await be(c, FIX.parentA);
+    assert.equal(await count(c, `select 1 from public.membership_removals where member_child_id=$1 and note='secret reason'`, [FIX.childA1]), 1, 'the PARENT reads the why-note (accountability)');
+    await be(c, S5B.standLeader);
+    assert.equal(await count(c, `select 1 from public.membership_removals where member_child_id=$1`, [FIX.childA1]), 1, 'the group LEADER reads the why-note');
+    // suppression-not-deletion: the honest record persists
+    await c.query('reset role');
+    assert.ok((await c.query(`select count(*)::int n from public.attempts where child_id=$1`, [FIX.childA1])).rows[0].n >= 1, 'suppression-not-deletion: the honest record (attempts) persists after removal');
+  });
+  // (flag path) a co-tutor (member, not the created_by owner) can’t remove → flags; the leader reads it
+  await as('authenticated', coTutor, async (c) => {
+    await c.query('reset role');
+    await c.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true) on conflict do nothing`, [S5B.standClass, FIX.childA1]);
+    await c.query('set local role authenticated'); await be(c, coTutor);
+    assert.equal((await c.query(`select public.remove_member($1,$2,'x') r`, [S5B.standClass, FIX.childA1])).rows[0].r.error, 'not_authorized', 'a co-tutor (not the owner) cannot remove_member');
+    assert.equal((await c.query(`select public.flag_member($1,$2,'wrong roster') r`, [S5B.standClass, FIX.childA1])).rows[0].r.ok, true, 'a co-tutor FLAGS the wrong member instead');
+    await be(c, S5B.standLeader);
+    assert.equal(await count(c, `select 1 from public.membership_removals where member_child_id=$1 and kind='flag' and note='wrong roster'`, [FIX.childA1]), 1, 'the flag surfaces to the group LEADER');
+  });
+  // (ref-count) removal from one of two classes → access retained via the other
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass2, FIX.childA1]);
+    await drainAs(c, S5B.standLeader);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'two classes → work-view');
+    await be(c, S5B.standLeader);
+    await c.query(`select public.remove_member($1,$2,'left one class')`, [S5B.standClass, FIX.childA1]);
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'ref-count: removal from ONE class → access RETAINED via the other (S5b)');
+  });
+});
+
+test('S6-d: SEC-03 folds — child can’t flag; whitespace-only why-note rejected; remove_member class/team-only; flag P7', async () => {
+  await seedS5b(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await drainAs(c);
+    // (SHOULD-FIX 1) a CHILD actor cannot file a flag
+    await be(c, FIX.childA1Login);
+    assert.equal((await c.query(`select public.flag_member($1,$2,'x') r`, [S5B.standClass, FIX.childA1])).rows[0].r.error, 'not_authorized', 'a CHILD actor cannot file a flag (parent-in-the-loop)');
+    // (SHOULD-FIX 3) a whitespace-only why-note is rejected
+    await be(c, S5B.standLeader);
+    assert.equal((await c.query(`select public.remove_member($1,$2,E'\t\n ') r`, [S5B.standClass, FIX.childA1])).rows[0].r.error, 'why_required', 'a whitespace-only why-note is REJECTED (accountability preserved)');
+    await c.query('reset role');
+    assert.equal((await c.query(`select active from public.memberships where group_id=$1 and member_child_id=$2`, [S5B.standClass, FIX.childA1])).rows[0].active, true, 'the whitespace-rejected removal changed nothing');
+  });
+  // (SHOULD-FIX 2) remove_member is class/team-only — the academy director cannot remove_member from the academy group
+  await as('authenticated', S3.director, async (c) => {
+    assert.equal((await c.query(`select public.remove_member($1,$2,'x') r`, [S3.academyA, FIX.childA1])).rows[0].r.error, 'bad_purpose', 'remove_member refuses a non-class/team group (parent-supreme: only where the parent can re-add)');
+  });
+  // (P7 flag) a flag note is also adult-scoped — the flagged child cannot read it (same policy as removed)
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await c.query('reset role');
+    await c.query(`insert into public.membership_removals (kind, group_id, member_child_id, actor_id, note) values ('flag',$1,$2,$3,'flag secret')`, [S5B.standClass, FIX.childA1, S5B.standLeader]);
+    await c.query('set local role authenticated'); await be(c, FIX.childA1Login);
+    assert.equal(await count(c, `select 1 from public.membership_removals where member_child_id=$1 and kind='flag'`, [FIX.childA1]), 0, 'the flagged CHILD cannot read a flag note either (P7 — same policy)');
   });
 });

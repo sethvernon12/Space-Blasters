@@ -2125,3 +2125,76 @@ test('S3-e: instant removal (same-txn); cross-family + child-actor blocked; even
     assert.equal(await count(c, `select 1 from public.events where subject_child_id=$1 and group_id=$2`, [FIX.childB1, S2.cls]), 0, 'C2 unaffected: a co-parent still reads 0 of another child’s child-subject group event');
   });
 });
+
+// ============================================================================
+// BRIELLE LAUNCH · 0053 — CHILD-ACTOR BELTS. is_my_child() is TRUE for the child's OWN minted
+// login, so write paths gated only on is_my_child/can_write_child let the child act as the parent.
+// 0053 adds `not is_child_actor_self()` belts (+ a consent belt on the direct write paths). These
+// prove the child login canNOT act as the parent, and that the ADULT paths stay intact.
+// ============================================================================
+test('0053-a: BLOCKER — a child login cannot self-issue a tutor_grant / forge a consent disclosure; the parent still can', async () => {
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    await rejects(c, `insert into public.tutor_grants (tutor_id, child_id, granted_by) values ($1,$2,$3)`,
+      ['0000dead-0000-4000-8000-000000000001', FIX.childA1, FIX.childA1Login], /row-level security|permission denied/i,
+      'a child login CANNOT insert a tutor_grant (the not-is_child_actor_self belt)');
+  });
+  assert.equal((await db.client.query(`select count(*)::int n from public.tutor_grants where tutor_id=$1`, ['0000dead-0000-4000-8000-000000000001'])).rows[0].n, 0, 'no grant was created by the child (so no forged consent_ledger disclosure)');
+  // POSITIVE CONTROL: the PARENT can still issue a disclosure grant (the belt does not break the adult path)
+  await as('authenticated', FIX.parentA, async (c) => {
+    const r = await c.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by) values ($1,$2,$3) returning id`,
+      ['0000900d-0000-4000-8000-000000000001', FIX.childA1, FIX.parentA]);
+    assert.equal(r.rows.length, 1, 'the PARENT can still issue a tutor_grant (adult path intact)');
+  });
+});
+
+test('0053-b: a child login cannot self-remove from a group; the parent still can', async () => {
+  await seedS2(db.client);   // childA1 is a member of S2.cls
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal(((await c.query(`select public.leave_group($1,$2,null) r`, [S2.cls, FIX.childA1])).rows[0].r).error, 'not_authorized', 'a child cannot self-remove from a group (parent-in-the-loop belt)');
+  });
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(((await c.query(`select public.leave_group($1,$2,null) r`, [S2.cls, FIX.childA1])).rows[0].r).ok, true, 'the PARENT can remove their own child (adult path intact)');
+  });
+});
+
+test('0053-c: a child cannot self-assign; NO assignment/artifact write to a consent-null child (consent belt)', async () => {
+  // the child login cannot self-assign
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    await rejects(c, `insert into public.assignments (child_id, assigned_by, skill_id, title) values ($1,$2,'add5','x')`,
+      [FIX.childA1, FIX.childA1Login], /row-level security/i, 'a child cannot self-assign an assignment');
+  });
+  await as('authenticated', FIX.parentA, async (c) => {
+    // NO child-DATA write before VPC (childA3 is consent-null) — the 0053 consent belts
+    await rejects(c, `insert into public.assignments (child_id, assigned_by, skill_id, title) values ($1,$2,'add5','x')`,
+      [FIX.childA3, FIX.parentA], /row-level security/i, 'no assignment write before consent (childA3, consent-null)');
+    await rejects(c, `insert into public.teaching_artifacts (child_id, author_id, author_role, kind, visibility_scope) values ($1,$2,'parent','feedback','private')`,
+      [FIX.childA3, FIX.parentA], /row-level security/i, 'no teaching_artifact write before consent (childA3, consent-null)');
+    // POSITIVE CONTROL: the parent CAN assign for a CONSENTED child (adult + consent path intact)
+    const r = await c.query(`insert into public.assignments (child_id, assigned_by, skill_id, title) values ($1,$2,'add5','ok') returning id`, [FIX.childA1, FIX.parentA]);
+    assert.equal(r.rows.length, 1, 'the parent CAN assign for a consented child (adult + consent path intact)');
+  });
+});
+
+test('0053-d: a child cannot approve/reject their own AI grade (adult-only reviewer belt); the 2-arg overload is gone', async () => {
+  const dummy = '0000dead-0000-4000-8000-0000000000de';
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal(((await c.query(`select public.confirm_image_grade($1) r`, [dummy])).rows[0].r).error, 'not_authorized', 'a child cannot confirm an AI grade (belt fires before the proposal lookup)');
+    assert.equal(((await c.query(`select public.reject_image_grade($1) r`, [dummy])).rows[0].r).error, 'not_authorized', 'a child cannot reject an AI grade');
+  });
+  // an ADULT passes the child belt (then reaches unknown_proposal on the dummy) — proves the belt is child-specific
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(((await c.query(`select public.confirm_image_grade($1) r`, [dummy])).rows[0].r).error, 'unknown_proposal', 'an adult passes the child-actor belt (reaches the proposal lookup — belt is child-specific)');
+  });
+});
+
+test('0053-e: a child login cannot direct-INSERT a group (groups_insert belt); an adult still can', async () => {
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    await rejects(c, `insert into public.groups (purpose, name, created_by) values ('class','kid group',$1)`,
+      [FIX.childA1Login], /row-level security/i, 'a child login cannot direct-insert a group (parity with create_group)');
+  });
+  // POSITIVE CONTROL: an adult (parent) can still create a group directly (created_by = self)
+  await as('authenticated', FIX.parentA, async (c) => {
+    const r = await c.query(`insert into public.groups (purpose, name, created_by) values ('class','parent group',$1) returning id`, [FIX.parentA]);
+    assert.equal(r.rows.length, 1, 'an adult can still direct-insert a group (adult path intact)');
+  });
+});

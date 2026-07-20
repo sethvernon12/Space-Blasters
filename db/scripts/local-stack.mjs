@@ -90,6 +90,7 @@ export const FILES_M3 = [
   'supabase/migrations/0050_rating_kind.sql',
   'supabase/migrations/0051_essentials_rating.sql',
   'supabase/migrations/0052_follower_axis.sql',
+  'supabase/migrations/0053_child_actor_belts.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

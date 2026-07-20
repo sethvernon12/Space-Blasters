@@ -79,10 +79,10 @@ export async function seedFixtures(client) {
 
   // mastery rows (written by the service-side model worker in real life)
   await client.query(
-    `insert into public.child_skill_mastery (child_id, skill_id, alpha, beta, last_seen_at, last_correct_at, model_version) values
-     ($1, 'add5', 5, 2, now(), now(), 'mastery-v1'),
-     ($1, 'sub5', 2, 3, now(), now(), 'mastery-v1'),
-     ($2, 'mult2', 3, 1, now(), now(), 'mastery-v1')`,
+    `insert into public.child_skill_mastery (child_id, skill_id, alpha, beta, attempts_count, correct_count, last_seen_at, last_correct_at, model_version) values
+     ($1, 'add5', 5, 2, 5, 4, now(), now(), 'mastery-v1'),
+     ($1, 'sub5', 2, 3, 3, 1, now(), now(), 'mastery-v1'),
+     ($2, 'mult2', 3, 1, 2, 2, now(), now(), 'mastery-v1')`,
     [FIX.childA1, FIX.childB1]
   );
 

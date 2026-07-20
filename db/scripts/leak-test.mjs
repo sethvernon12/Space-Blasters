@@ -1782,3 +1782,87 @@ test('S8-d: SF-1 parent revocation blocks a re-mint; SF-2 bind-once is enforced 
   await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','SF2-standalone',$1)`, [S8.sf2Leader]);
   await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','SF2-standalone-2',$1)`, [S8.sf2Leader]);
 });
+
+// ============================================================================
+// FOLLOW-ME · S1 — THE THIN INTERIOR DISPLAY (0049). Read-only derived views over the
+// child_skill_mastery projection (DATA-3/4). Interior-only: parent (is_my_child) + trusted
+// staff (can_view_child). NO follower, NO media, NO Stripe. Fail-closed per child (SF-1);
+// whitelisted rolled-up columns only (FOL-9 star, never raw %/incidents); NO cross-child
+// ranking. seedS1 bumps one of childA1's skills to MASTERED so milestones are non-vacuous.
+// ============================================================================
+const seedS1 = async (client) => {
+  // bump one of childA1's skills to FLUENT (mastery>=0.85 AND attempts_count>=5) so milestones + skills_fluent are non-vacuous
+  await client.query(`update public.child_skill_mastery set alpha=20, beta=1, attempts_count=19, correct_count=19 where child_id=$1 and skill_id='add5'`, [FIX.childA1]);
+};
+
+test('S1-a: parent sees ONLY their own child’s honest AGGREGATE (star, not raw %); another family → 0; whitelist columns', async () => {
+  await seedS1(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    const rows = (await c.query(`select * from public.follow_me_aggregate($1)`, [FIX.childA1])).rows;
+    assert.equal(rows.length, 1, 'a parent gets their OWN child’s Follow-Me aggregate');
+    const r = rows[0];
+    // column-allowlist: ONLY whitelisted rolled-up columns — no incident / raw-mastery / grade column
+    assert.deepEqual(Object.keys(r).sort(), ['child_id','essentials_avg','faithfulness_star','first_name','practice_count','skills_fluent','signal_version'].sort(), 'emits ONLY the whitelist (no problem_text/result/raw-mastery/grade)');
+    assert.ok(Number.isInteger(r.faithfulness_star) && r.faithfulness_star >= 1 && r.faithfulness_star <= 10, 'FOL-9 faithfulness STAR is an integer 1..10 (never a raw mastery %)');
+    assert.ok(r.first_name && typeof r.first_name === 'string', 'first-name-only (nickname)');
+    assert.equal(r.essentials_avg, null, 'essentials_avg is NULL in S1 (wired in S2)');
+    assert.equal(r.signal_version, 'fm-v1', 'the emitted signal carries a version (DATA-4)');
+    assert.ok(r.practice_count > 0 && r.skills_fluent >= 1, 'honest practice (sum attempts_count) + fluency count from the projection (non-vacuous)');
+    // cross-family: another family’s child → 0 rows (fail-closed)
+    assert.equal(await count(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childB1]), 0, 'cross-family: a parent gets 0 of another family’s Follow-Me aggregate');
+  });
+});
+
+test('S1-b: interior-only — trusted staff (can_view_child) see it; a stranger + anon have NO backdoor; nothing scoped followers', async () => {
+  await seedS1(db.client);
+  // a granted tutor (interior staff, can_view_child) sees the aggregate
+  await as('authenticated', FIX.tutor, async (c) => {
+    assert.equal(await count(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childA1]), 1, 'a granted tutor (can_view_child) reads the interior aggregate');
+  });
+  // a random authenticated stranger (not the parent, no grant) → 0 (S1 introduces NO follower/public path)
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(await count(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childA1]), 0, 'a stranger gets 0 — S1 has NO follower/public read path');
+  });
+  // anon (the public game key) cannot call Follow-Me at all (revoked)
+  await as('anon', null, async (c) => {
+    await rejects(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childA1], /permission denied/i, 'anon cannot call follow_me_aggregate');
+  });
+  // S1 scopes NOTHING 'followers': no teaching_artifacts visibility_scope='followers' rows exist (column is visibility_scope per 0005)
+  assert.equal((await db.client.query(`select count(*)::int n from public.teaching_artifacts where visibility_scope='followers'`)).rows[0].n, 0, 'S1 creates no followers-scoped content');
+});
+
+test('S1-c: the child’s OWN view + NO cross-child ranking/leaderboard EVER', async () => {
+  await seedS1(db.client);
+  // the child’s own login sees their OWN page (aggregate + celebration milestones)
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal(await count(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childA1]), 1, 'the child sees their OWN Follow-Me page (is_my_child via auth_user_id)');
+    assert.ok(await count(c, `select 1 from public.follow_me_milestones($1)`, [FIX.childA1]) >= 1, 'the child sees their own celebration milestones (growth-and-celebration framing)');
+    assert.equal(await count(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childA2]), 0, 'the child cannot view a sibling’s page');
+  });
+  // NO cross-child ranking: my_follow_me_pages returns ONLY the caller’s own children (never a cross-family list)
+  await as('authenticated', FIX.parentA, async (c) => {
+    const kids = (await c.query(`select child_id from public.my_follow_me_pages()`)).rows.map(r => r.child_id);
+    assert.ok(kids.includes(FIX.childA1), 'a parent’s page list includes their own child that HAS a page');
+    assert.ok(!kids.includes(FIX.childB1), 'NO cross-family: another family’s child never appears (no leaderboard)');
+    assert.ok(!kids.includes(FIX.childA2) && !kids.includes(FIX.childA3), 'empty-upstream children are excluded (no auto-page)');
+  });
+});
+
+test('S1-d: empty aggregate → NO page; growth/milestones aggregate-only + fail-closed cross-family', async () => {
+  await seedS1(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    // childA2/A3 have NO upstream → no page
+    assert.equal(await count(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childA2]), 0, 'empty aggregate → no page (childA2, no upstream)');
+    // growth: ONLY rolled-up columns; a child with attempts returns weekly rollups
+    const g = (await c.query(`select * from public.follow_me_growth($1)`, [FIX.childA1])).rows;
+    assert.ok(g.length >= 1, 'growth returns weekly rollups for a child with attempts');
+    assert.deepEqual(Object.keys(g[0]).sort(), ['accuracy_pct','practice','week_start'].sort(), 'growth emits ONLY weekly rollup columns (no incident/problem_text)');
+    // milestones column-allowlist (positive fluency only; no incident/raw-% column)
+    const ms = (await c.query(`select * from public.follow_me_milestones($1)`, [FIX.childA1])).rows;
+    assert.ok(ms.length >= 1 && ms.every(x => x.kind === 'fluency'), 'milestones are POSITIVE fluency events only (no loss-aversion / incidents)');
+    assert.deepEqual(Object.keys(ms[0]).sort(), ['achieved_at','kind','label','skill_id'].sort(), 'milestones emit ONLY the whitelist (no raw-%/problem_text)');
+    // cross-family fail-closed on growth + milestones
+    assert.equal(await count(c, `select 1 from public.follow_me_growth($1)`, [FIX.childB1]), 0, 'cross-family: growth for another family’s child → 0');
+    assert.equal(await count(c, `select 1 from public.follow_me_milestones($1)`, [FIX.childB1]), 0, 'cross-family: milestones for another family’s child → 0');
+  });
+});

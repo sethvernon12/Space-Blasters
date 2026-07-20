@@ -68,7 +68,11 @@ if (!process.argv.includes('--static')) {
                         // S5b (0045): the standalone-leader ID-verification clearance surface
                         'standalone_leader_clearances',
                         // S6 (0046): the adult-scoped removal/flag accountability record
-                        'membership_removals'];
+                        'membership_removals',
+                        // S2 (0050): the versioned Core-6 essentials taxonomy (reference data)
+                        'essentials',
+                        // S3 (0052): the follower axis — per-child circle map + parent-vouch invites
+                        'follower_circles', 'follower_invites'];
     // deny-by-default tables that intentionally have ZERO policies (definer/service only)
     const NO_CLIENT_TABLES = ['rpc_rate_limits', 'derivation_outbox', 'academy_staff_clearances', 'membership_requests', 'standalone_leader_clearances'];
 

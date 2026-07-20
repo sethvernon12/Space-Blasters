@@ -650,8 +650,13 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   await db.client.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, active, origin, origin_group_id) values ($1,$2,$3,true,'group_derived',$4)`, ['0000f00d-0000-4000-8000-000000000003', kid, np, g]);  // S5a: purge must delete BOTH origins
   await db.client.query(`insert into public.membership_requests (group_id, member_child_id, requested_by, status) values ($1,$2,$3,'pending')`, [g, kid, np]);  // S4: RESTRICT → purge_child must delete it
   await db.client.query(`insert into public.membership_removals (kind, group_id, member_child_id, actor_id, note) values ('removed',$1,$2,$3,'S0 note')`, [g, kid, np]);  // S6: RESTRICT → purge_child must delete it
+  // S3 follower axis: the child's follower circle + map + a pending invite + an ACTIVATED follower membership
+  const fcircle = (await db.client.query(`insert into public.groups (purpose,name,created_by) values ('follower_circle','Follow Me',$1) returning id`, [np])).rows[0].id;
+  await db.client.query(`insert into public.follower_circles (child_id, group_id, activated) values ($1,$2,true)`, [kid, fcircle]);                        // S3: RESTRICT → purge must delete it
+  await db.client.query(`insert into public.follower_invites (code_hash, child_id, invited_name, created_by, expires_at) values ('s0c-follower',$1,'Gran',$2, now()+interval '1 day')`, [kid, np]);  // S3: RESTRICT
+  await db.client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'follower',true)`, [fcircle, '0000f011-0000-4000-8000-00000000000e']);            // cascades via the circle-group delete
 
-  const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id'], ['membership_requests', 'member_child_id'], ['membership_removals', 'member_child_id']];
+  const GT = [['memberships', 'member_child_id'], ['channel_members', 'member_child_id'], ['derivation_outbox', 'member_child_id'], ['tutor_grants', 'child_id'], ['membership_requests', 'member_child_id'], ['membership_removals', 'member_child_id'], ['follower_circles', 'child_id'], ['follower_invites', 'child_id']];
   // BEFORE purge: each seeded table has the child's row — so zero-after is non-vacuous AND the
   // disposition-VALUE assertions below pin purge_child's OWN accounting (not just FK cascade).
   const seeded = {};
@@ -679,6 +684,13 @@ test('S0(c): purge_child cascades every group table + grants (zero residual + re
   assert.equal(del.membership_requests, seeded.membership_requests, 'receipt bucket: membership_requests');
   assert.equal(del.membership_removals, seeded.membership_removals, 'receipt bucket: membership_removals');
   assert.equal(del.subject_events, seededSubjEvents, 'receipt bucket: subject_events');
+  // S3 follower axis: the circle GROUP + its follower memberships cascade; the receipt records them
+  assert.equal((await db.client.query(`select count(*)::int n from public.groups where id=$1`, [fcircle])).rows[0].n, 0, 'follower_circle GROUP: zero residual');
+  assert.equal((await db.client.query(`select count(*)::int n from public.memberships where group_id=$1`, [fcircle])).rows[0].n, 0, 'follower memberships cascade-purged (group_id ON DELETE CASCADE)');
+  assert.equal(del.follower_circles, seeded.follower_circles, 'receipt bucket: follower_circles');
+  assert.equal(del.follower_invites, seeded.follower_invites, 'receipt bucket: follower_invites');
+  assert.equal(del.follower_circle_groups, 1, 'receipt bucket: follower_circle_groups');
+  assert.equal(del.follower_memberships, 1, 'receipt bucket: follower_memberships (the severed follower is recorded)');
 });
 
 // S2 · create_group is authenticated-only + ZOMBIE-WRITE guarded. The RPC is SECURITY DEFINER
@@ -1986,5 +1998,130 @@ test('S2-e: C2 guard preserved — a co-member reads 0 of another family’s chi
   // childB1’s OWN guardian (parentB, can_view_child) reads it — positive control (branch still works)
   await as('authenticated', FIX.parentB, async (c) => {
     assert.ok(await count(c, `select 1 from public.events where subject_child_id=$1 and group_id=$2`, [FIX.childB1, S2.cls]) >= 1, 'C2 positive control: the child’s OWN guardian reads the event (can_view_child branch)');
+  });
+});
+
+// ============================================================================
+// FOLLOW-ME · S3 — THE FOLLOWER AXIS (0052, crown jewel). Opens a child's page to OUTSIDE
+// followers WITHOUT exposing raw work / an incident / another child. is_scoped_follower is a
+// DISJOINT predicate (never an OR on can_view_child); the follower reads ONLY follow_me_public.
+// Parent-vouch single-use invite → OAuth redeem → parent-activation → follower reads the narrow page.
+// ============================================================================
+const S3F = {
+  follower:  '0000f011-0000-4000-8000-000000000001',   // an outside follower (Google/Apple signed-in)
+  leader2:   '0000f011-0000-4000-8000-0000000000c2',    // a 2nd distinct leader (for the follower distinct-leaders floor)
+};
+// mint → redeem → activate: make S3F.follower a scoped, activated follower of p_child (call inside an as() txn as parentA)
+const becomeFollower = async (c, parentSub, child, name = 'Gran') => {
+  await be(c, parentSub);
+  const code = ((await c.query(`select public.mint_follower_invite($1,$2,336) r`, [child, name])).rows[0].r).code;
+  await be(c, S3F.follower); await c.query(`select public.redeem_follower_invite($1)`, [code]);
+  await be(c, parentSub); await c.query(`select public.set_followers_activated($1, true)`, [child]);
+  await be(c, S3F.follower);
+};
+
+test('S3-a: parent-vouch + OAuth + activation required; a follower reads ONLY follow_me_public (0 raw work/volume); disjoint from can_view_child', async () => {
+  await seedS1(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    const mint = (await c.query(`select public.mint_follower_invite($1,'Grandma Jo',336) r`, [FIX.childA1])).rows[0].r;
+    assert.ok(mint.ok && mint.code, 'the parent mints a name-approved single-use follower invite for their OWN child');
+    // un-redeemed → not a follower
+    await be(c, S3F.follower);
+    assert.equal((await c.query(`select public.is_scoped_follower($1) v`, [FIX.childA1])).rows[0].v, false, 'un-redeemed invitee → not a scoped follower');
+    const red = (await c.query(`select public.redeem_follower_invite($1) r`, [mint.code])).rows[0].r;
+    assert.ok(red.ok && red.child_id === FIX.childA1, 'the invitee (Google/Apple signed-in) redeems');
+    // DEFAULT-PRIVATE: not activated → 0
+    assert.equal((await c.query(`select public.is_scoped_follower($1) v`, [FIX.childA1])).rows[0].v, false, 'D3 default-private: not a scoped follower until the parent activates');
+    assert.equal(await count(c, `select 1 from public.follow_me_public($1)`, [FIX.childA1]), 0, 'default-private: an approved follower reads 0 until activation');
+    // parent activates
+    await be(c, FIX.parentA); await c.query(`select public.set_followers_activated($1, true)`, [FIX.childA1]);
+    await be(c, S3F.follower);
+    assert.equal((await c.query(`select public.is_scoped_follower($1) v`, [FIX.childA1])).rows[0].v, true, 'after activation → a scoped follower');
+    // the follower reads ONLY the narrow follower page (D4 whitelist)
+    const pub = (await c.query(`select * from public.follow_me_public($1)`, [FIX.childA1])).rows;
+    assert.equal(pub.length, 1, 'the follower reads the follower-visible page');
+    assert.deepEqual(Object.keys(pub[0]).sort(), ['achievements','essentials_avg','faithfulness_star','first_name'].sort(), 'D4: ONLY first-name + star + essentials + achievements (NO practice_count/volume/raw work)');
+    assert.ok(pub[0].first_name && Number.isInteger(pub[0].faithfulness_star) && pub[0].faithfulness_star >= 1, 'first-name-only + FOL-9 star');
+    // DISJOINT from can_view_child: a follower is NEVER can_view_child + reads 0 raw work anywhere
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, false, 'a follower is NEVER can_view_child (disjoint predicate)');
+    assert.equal(await count(c, `select 1 from public.attempts where child_id=$1`, [FIX.childA1]), 0, 'follower reads 0 raw attempts');
+    assert.equal(await count(c, `select 1 from public.child_skill_mastery where child_id=$1`, [FIX.childA1]), 0, 'follower reads 0 raw mastery');
+    assert.equal(await count(c, `select 1 from public.follow_me_aggregate($1)`, [FIX.childA1]), 0, 'follower gets 0 from the INTERIOR aggregate (interior-only)');
+    await rejects(c, `select public.essentials_score_public($1)`, [FIX.childA1], /permission denied/i, 'essentials_score_public is definer-only');
+  });
+});
+
+test('S3-b: a follower of child A gets 0 of child B (and any child they don’t follow) — the param is never trusted', async () => {
+  await seedS1(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    await becomeFollower(c, FIX.parentA, FIX.childA1, 'Uncle');   // scoped follower of childA1 only
+    assert.equal((await c.query(`select public.is_scoped_follower($1) v`, [FIX.childB1])).rows[0].v, false, 'a follower of A is NOT a scoped follower of B');
+    assert.equal(await count(c, `select 1 from public.follow_me_public($1)`, [FIX.childB1]), 0, 'follower-of-A → 0 of childB1 (another family, WITH a page)');
+    assert.equal(await count(c, `select 1 from public.follow_me_public($1)`, [FIX.childA2]), 0, 'follower-of-A → 0 of a child they don’t follow (param not trusted)');
+  });
+});
+
+test('S3-c: visibility enforcement is SURGICAL — a guardian still reads the child’s own PRIVATE work (interior unbroken); a follower reads 0 artifacts', async () => {
+  await seedS1(db.client);
+  await db.client.query(`insert into public.teaching_artifacts (child_id, kind, author_role, author_id, visibility_scope, payload) values ($1,'feedback','tutor',$2,'private','{}'::jsonb)`, [FIX.childA1, FIX.tutor]);
+  // the guardian still reads their child’s PRIVATE artifact (interior branch UNCHANGED)
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.ok(await count(c, `select 1 from public.teaching_artifacts where child_id=$1 and visibility_scope='private'`, [FIX.childA1]) >= 1, 'the guardian still reads the child’s PRIVATE work — interior unbroken');
+  });
+  // a scoped follower reads 0 teaching_artifacts (no 'followers'-scoped rows exist; never private/interior)
+  await as('authenticated', FIX.parentA, async (c) => {
+    await becomeFollower(c, FIX.parentA, FIX.childA1, 'Aunt');
+    assert.equal(await count(c, `select 1 from public.teaching_artifacts where child_id=$1`, [FIX.childA1]), 0, 'a follower reads 0 artifacts (no followers-scoped rows; never the private interior)');
+  });
+});
+
+test('S3-d: the follower essentials floor is DISTINCT-LEADERS (>=2, FOL-7) — one leader never surfaces on the follower page', async () => {
+  await seedS1(db.client); await seedS2(db.client);
+  await db.client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S2.cls, S3F.leader2]);
+  await as('authenticated', S2.leader, async (c) => {
+    // ONE leader rates childA1 on 2 essentials → interior surfaces (S2 floor), but the follower does NOT
+    await c.query(`select public.submit_rating($1,$2,'effort',8)`, [FIX.childA1, S2.cls]);
+    await c.query(`select public.submit_rating($1,$2,'respect',9)`, [FIX.childA1, S2.cls]);
+    await be(c, FIX.parentA);
+    assert.equal(await fmAvg(c, FIX.childA1), '8.5', 'interior: one leader’s 2 ratings surface (S2 count>=2 floor)');
+    await becomeFollower(c, FIX.parentA, FIX.childA1, 'Gran');
+    assert.equal(((await c.query(`select essentials_avg from public.follow_me_public($1)`, [FIX.childA1])).rows[0]).essentials_avg, null, 'FOL-7: ONE distinct leader → NULL on the follower page (distinct-leaders floor)');
+    // a SECOND distinct leader rates → the follower essentials now surfaces
+    await be(c, S3F.leader2);
+    await c.query(`select public.submit_rating($1,$2,'effort',6)`, [FIX.childA1, S2.cls]);
+    await c.query(`select public.submit_rating($1,$2,'respect',7)`, [FIX.childA1, S2.cls]);
+    await be(c, S3F.follower);
+    assert.ok(((await c.query(`select essentials_avg from public.follow_me_public($1)`, [FIX.childA1])).rows[0]).essentials_avg !== null, 'two DISTINCT leaders → the follower essentials average surfaces');
+  });
+});
+
+test('S3-e: instant removal (same-txn); cross-family + child-actor blocked; events_select C2 + S2 rating isolation unaffected', async () => {
+  await seedS1(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    await becomeFollower(c, FIX.parentA, FIX.childA1, 'Pop');
+    assert.equal(await count(c, `select 1 from public.follow_me_public($1)`, [FIX.childA1]), 1, 'the follower can read the page');
+    // INSTANT removal: the parent removes the follower → is_scoped_follower drops SAME-TXN
+    await be(c, FIX.parentA); await c.query(`select public.remove_follower($1,$2)`, [FIX.childA1, S3F.follower]);
+    await be(c, S3F.follower);
+    assert.equal((await c.query(`select public.is_scoped_follower($1) v`, [FIX.childA1])).rows[0].v, false, 'instant removal: is_scoped_follower false SAME-TXN');
+    assert.equal(await count(c, `select 1 from public.follow_me_public($1)`, [FIX.childA1]), 0, 'a removed follower reads 0');
+  });
+  // cross-family + child-actor: only the child’s OWN parent may mint/activate/remove
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(((await c.query(`select public.mint_follower_invite($1,'X',336) r`, [FIX.childA1])).rows[0].r).error, 'not_authorized', 'cross-family: a stranger cannot mint a follower invite for another family’s child');
+    assert.equal(((await c.query(`select public.set_followers_activated($1,true) r`, [FIX.childA1])).rows[0].r).error, 'not_authorized', 'cross-family: a stranger cannot activate followers for another family’s child');
+  });
+  await as('authenticated', FIX.childA1Login, async (c) => {
+    assert.equal(((await c.query(`select public.mint_follower_invite($1,'X',336) r`, [FIX.childA1])).rows[0].r).error, 'not_authorized', 'a child login cannot mint follower invites');
+  });
+  // events_select C2 + S2 rating isolation still hold under the S3 policy change
+  await seedS2(db.client);
+  // a child-subject membership event for childB1 (seeded as superuser, outside the authenticated txn)
+  await db.client.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3,'{}'::jsonb)`, [S2.leader, FIX.childB1, S2.cls]);
+  await as('authenticated', S2.leader, async (c) => {
+    await c.query(`select public.submit_rating($1,$2,'effort',7)`, [FIX.childB1, S2.cls]);
+    await be(c, FIX.parentA);
+    assert.equal(await count(c, `select 1 from public.events where kind='rating' and subject_child_id=$1`, [FIX.childB1]), 0, 'S2 unaffected: a co-parent still reads 0 raw ratings');
+    assert.equal(await count(c, `select 1 from public.events where subject_child_id=$1 and group_id=$2`, [FIX.childB1, S2.cls]), 0, 'C2 unaffected: a co-parent still reads 0 of another child’s child-subject group event');
   });
 });

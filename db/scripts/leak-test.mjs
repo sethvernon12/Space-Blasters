@@ -1619,3 +1619,166 @@ test('S7-c: coach isolation (can’t see another coach’s team); cockpit-follow
     assert.equal(await count(c, `select 1 from public.coach_roster() where group_id=$1`, [S5B.standClass]), 0, 'cockpit-follows-role: the co-tutor loses the leader role → the roster DISAPPEARS');
   });
 });
+
+// ============================================================================
+// GROUP ENGINE · S8 — ACADEMY REDEEM REFACTOR (0048). redeem_invitation for a tutor/coach
+// now ASSEMBLES a class/team GROUP via the engine (provision-once + an ENROLLMENT-AUTHORIZED
+// child add) instead of a bespoke per-child parent_direct grant → the S7 roster + the S5b
+// co-mint DERIVE, and academy-tutor WORK-access finally routes through the background-check
+// gate (D1). Reuses seedAcademy: S3.academyA (director S3.director), S3.staffCleared (bg-checked),
+// enrolled famA/famB. A FRESH unverified tutor uid (no clearance) proves roster-only. Redeems run
+// inside a rolled-back as()-txn; the drain runs via drainAs (reset role → drain → authenticated).
+// ============================================================================
+const S8 = {
+  unverTutor: '0000e1a5-0000-4000-8000-0000000000f1',
+  revTutor:   '0000e1a5-0000-4000-8000-0000000000f2',   // holds a parent-REVOKED parent_direct grant (SF-1)
+  sf2Leader:  '0000e1a5-0000-4000-8000-0000000000f3',    // a fresh academy leader for the bind-once constraint (SF-2)
+};
+const mintTutor = async (c, academy, child) =>
+  (await c.query(`select public.mint_invitation($1,'tutor',$2,true,168) r`, [academy, child])).rows[0].r.code;
+
+// S8-a — VERIFIED tutor redeem: class auto-provisions (org-scoped) + tutor is LEADER + coach_roster
+// shows the enrolled child immediately (roster ≠ work); the drain CO-MINTS the group_derived
+// work-grant (attributed to the parent) → coach_students_work + can_view_child. Grant is SCOPED.
+test('S8-a: verified tutor redeem → class provisions + leader + roster; the drain co-mints the work-grant (D1)', async () => {
+  await seedAcademy(db.client);
+  await as('authenticated', S3.director, async (c) => {
+    const code = await mintTutor(c, S3.academyA, FIX.childA1);      // mint as the director
+    await be(c, S3.staffCleared);                                    // redeem as the VERIFIED (bg-checked) tutor
+    const red = (await c.query(`select public.redeem_invitation($1) r`, [code])).rows[0].r;
+    assert.ok(red.ok && red.kind === 'tutor' && red.class_id, `verified tutor redeems → class provisioned: ${JSON.stringify(red)}`);
+    const cls = red.class_id;
+    // the provisioned group is an ACADEMY-scoped class (org_id) → is_leader_verified takes the academy branch
+    const g = (await c.query(`select purpose::text p, org_id, created_by from public.groups where id=$1`, [cls])).rows[0];
+    assert.ok(g.p === 'class' && g.org_id === S3.academyA, 'the provisioned group is a class carrying org_id=academy');
+    // the tutor is the LEADER; the S7 roster lights up BEFORE any drain (roster ≠ work)
+    assert.equal((await c.query(`select public.is_group_leader($1,$2) v`, [cls, S3.staffCleared])).rows[0].v, true, 'the tutor is the class leader (is_group_leader)');
+    assert.ok(await count(c, `select 1 from public.coach_roster() where group_id=$1 and child_id=$2`, [cls, FIX.childA1]) >= 1, 'coach_roster shows the enrolled child (roster facet)');
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, false, 'pre-drain: no work-grant yet (co-mint fires on the drain, like every join)');
+    // drain → co-mint (verified leader)
+    await drainAs(c, S3.staffCleared);
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, true, 'post-drain: the verified tutor CO-MINTS a group_derived work-grant → can_view_child');
+    const grant = (await c.query(`select origin, origin_group_id, granted_by, active from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived'`, [S3.staffCleared, FIX.childA1])).rows[0];
+    assert.ok(grant && grant.active && grant.origin_group_id === cls && grant.granted_by === FIX.parentA, 'the grant is group_derived, active, scoped to the class, attributed to the enrolled parent (transparency)');
+    assert.ok(await count(c, `select 1 from public.coach_students_work() where group_id=$1 and child_id=$2`, [cls, FIX.childA1]) >= 1, 'coach_students_work shows the child (work facet)');
+    // SCOPED: a NON-invited enrolled sibling (childA2, consented, same academy) is NOT in the cockpit
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA2])).rows[0].v, false, 'scoped: a non-invited enrolled sibling is NOT viewable (grant is per invited+enrolled child)');
+    assert.equal(await count(c, `select 1 from public.coach_roster() where child_id=$1`, [FIX.childA2]), 0, 'scoped: the non-invited sibling is not on the roster');
+  });
+});
+
+// S8-b — D1 (the security win): an UNVERIFIED tutor gets ROSTER-ONLY, no work (background-check
+// gate governs). Plus BIND-ONCE idempotency (two keys → one class) and the enrollment-CONSENT gate.
+test('S8-b: unverified tutor → roster only (D1 bg-check gate); bind-once; a non-consented child stays invisible', async () => {
+  await seedAcademy(db.client);
+
+  // ---- UNVERIFIED tutor (fresh uid, NO clearance): redeem → roster, but co-mint does NOT fire ----
+  await as('authenticated', S3.director, async (c) => {
+    const code1 = await mintTutor(c, S3.academyA, FIX.childA1);
+    await be(c, S8.unverTutor);
+    const red = (await c.query(`select public.redeem_invitation($1) r`, [code1])).rows[0].r;
+    assert.ok(red.ok && red.class_id, 'an unverified tutor still redeems (roster path)');
+    const cls = red.class_id;
+    await drainAs(c, S8.unverTutor);
+    assert.ok(await count(c, `select 1 from public.coach_roster() where group_id=$1 and child_id=$2`, [cls, FIX.childA1]) >= 1, 'D1: the UNVERIFIED tutor sees the child on the ROSTER');
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, false, 'D1: but NO work-grant (is_leader_verified=false — no completed background check)');
+    assert.equal(await count(c, `select 1 from public.coach_students_work() where group_id=$1`, [cls]), 0, 'D1: coach_students_work is EMPTY for the unverified tutor');
+    assert.equal((await c.query(`select has_work_access from public.coach_roster() where group_id=$1 and child_id=$2`, [cls, FIX.childA1])).rows[0].has_work_access, false, 'D1: the roster row reports has_work_access=false');
+  });
+
+  // ---- BIND-ONCE: the VERIFIED tutor redeems TWO keys (childA1 + childB1, different families) → ONE class ----
+  await as('authenticated', S3.director, async (c) => {
+    const kA = await mintTutor(c, S3.academyA, FIX.childA1);
+    const kB = await mintTutor(c, S3.academyA, FIX.childB1);
+    await be(c, S3.staffCleared);
+    const r1 = (await c.query(`select public.redeem_invitation($1) r`, [kA])).rows[0].r;
+    const r2 = (await c.query(`select public.redeem_invitation($1) r`, [kB])).rows[0].r;
+    assert.ok(r1.ok && r2.ok && r1.class_id === r2.class_id, 'bind-once: both redeems resolve to the SAME class (no double-provision)');
+    assert.equal((await c.query(`select count(*)::int n from public.groups where org_id=$1 and created_by=$2 and purpose='class'`, [S3.academyA, S3.staffCleared])).rows[0].n, 1, 'bind-once: exactly ONE class exists for (academy, tutor, class)');
+    await drainAs(c, S3.staffCleared);
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, true, 'bind-once: childA1 (family A) co-minted');
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childB1])).rows[0].v, true, 'bind-once: childB1 (family B) co-minted — one class spanning two families, each enrollment-authorized');
+    assert.equal((await c.query(`select count(distinct child_id)::int n from public.coach_students_work() where group_id=$1`, [r1.class_id])).rows[0].n, 2, 'both children appear in the work facet');
+  });
+
+  // ---- ENROLLMENT-CONSENT: a NON-consented enrolled child (childA3) never surfaces (roster or work) ----
+  await as('authenticated', S3.director, async (c) => {
+    const k3 = await mintTutor(c, S3.academyA, FIX.childA3);
+    await be(c, S3.staffCleared);
+    const r3 = (await c.query(`select public.redeem_invitation($1) r`, [k3])).rows[0].r;
+    assert.ok(r3.ok, 'redeem for a non-consented but ENROLLED child succeeds (enrollment predicate holds)');
+    await drainAs(c, S3.staffCleared);
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA3])).rows[0].v, false, 'consent gate: NO work-grant for a non-consented child (drain HELD + reconcile consent gate)');
+    assert.equal(await count(c, `select 1 from public.coach_roster() where child_id=$1`, [FIX.childA3]), 0, 'consent gate: a non-consented child is EXCLUDED from the roster (has_active_consent, F1)');
+  });
+});
+
+// S8-c — cross-academy border; parent transparency; remove-from-class revocation (S6 sync cut) +
+// the careful-out re-redeem guard (a parent-removed child is never silently re-added).
+test('S8-c: cross-academy border; parent transparency; remove-from-class revokes + careful-out re-redeem', async () => {
+  await seedAcademy(db.client);
+
+  // ---- CROSS-ACADEMY BORDER: an Academy B key for a child enrolled ONLY in Academy A → refused ----
+  await as('authenticated', S3.directorB, async (c) => {
+    const codeB = await mintTutor(c, S3.academyB, FIX.childA1);      // childA1 is enrolled in A, NOT B
+    await be(c, S3.staffB);
+    const red = (await c.query(`select public.redeem_invitation($1) r`, [codeB])).rows[0].r;
+    assert.ok(red.ok === false && red.error === 'child_not_enrolled', 'cross-academy: a child not enrolled in THIS academy is refused (enrollment predicate keyed on academy_id)');
+    assert.equal(await count(c, `select 1 from public.memberships m join public.groups g on g.id=m.group_id where g.org_id=$1 and m.member_child_id=$2`, [S3.academyB, FIX.childA1]), 0, 'cross-academy: NO class membership was created in Academy B');
+    await drainAs(c, S3.staffB);
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, false, 'cross-academy: Academy B staff gets NO work-access to a family-A child');
+  });
+
+  // ---- TRANSPARENCY + REMOVE-FROM-CLASS REVOCATION + CAREFUL-OUT ----
+  await as('authenticated', S3.director, async (c) => {
+    const code = await mintTutor(c, S3.academyA, FIX.childA1);
+    await be(c, S3.staffCleared);
+    const cls = (await c.query(`select public.redeem_invitation($1) r`, [code])).rows[0].r.class_id;
+    await drainAs(c);
+    // TRANSPARENCY: the enrolled PARENT sees who has access (granted_by=parent → tutor_grants_select)
+    await be(c, FIX.parentA);
+    assert.ok(await count(c, `select 1 from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived' and active`, [S3.staffCleared, FIX.childA1]) >= 1, 'transparency: the parent sees the co-minted grant (granted_by=parent)');
+    // REMOVE-FROM-CLASS: the parent removes their own child → S6 SYNCHRONOUS cut revokes the work-grant
+    const lr = (await c.query(`select public.leave_group($1,$2,null) r`, [cls, FIX.childA1])).rows[0].r;
+    assert.ok(lr.ok, 'the parent removes their child from the class (leave_group, is_my_child)');
+    await be(c, S3.staffCleared);
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, false, 'remove-from-class: the work-grant is CUT synchronously (D2 / S6)');
+    // CAREFUL-OUT: re-redeeming a FRESH key does NOT silently re-add the parent-removed child
+    await be(c, S3.director);
+    const code2 = await mintTutor(c, S3.academyA, FIX.childA1);
+    await be(c, S3.staffCleared);
+    const re = (await c.query(`select public.redeem_invitation($1) r`, [code2])).rows[0].r;
+    assert.ok(re.ok === false && re.error === 'removed_from_class', 'careful-out: re-redeem does NOT silently re-add a parent-removed child');
+    await drainAs(c, S3.staffCleared);
+    assert.equal((await c.query(`select public.can_view_child($1) v`, [FIX.childA1])).rows[0].v, false, 'careful-out: the grant stays revoked (re-add is the parent’s explicit S6 action)');
+  });
+});
+
+// S8-d — the two folded SEC-03 SHOULD-FIX guards:
+//   SF-1: a parent's revocation of a DIRECT grant blocks an Academy re-mint (parent-supreme careful-out).
+//   SF-2: bind-once is a real DB CONSTRAINT (a partial unique index), not just an application SELECT.
+test('S8-d: SF-1 parent revocation blocks a re-mint; SF-2 bind-once is enforced by a unique index', async () => {
+  await seedAcademy(db.client);
+
+  // ---- SF-1: parentA revokes a parent_direct grant to a tutor → the Academy cannot silently re-grant ----
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`insert into public.tutor_grants (tutor_id, child_id, granted_by, can_write, active, origin) values ($1,$2,$3,true,true,'parent_direct')`, [S8.revTutor, FIX.childA1, FIX.parentA]);
+    await c.query(`update public.tutor_grants set active=false, revoked_at=now() where tutor_id=$1 and child_id=$2 and origin='parent_direct'`, [S8.revTutor, FIX.childA1]);
+    await be(c, S3.director);
+    const code = await mintTutor(c, S3.academyA, FIX.childA1);
+    await be(c, S8.revTutor);
+    const red = (await c.query(`select public.redeem_invitation($1) r`, [code])).rows[0].r;
+    assert.ok(red.ok === false && red.error === 'revoked_by_parent', 'SF-1: a parent-revoked direct grant blocks the Academy re-mint (revoked_by_parent)');
+    assert.equal(await count(c, `select 1 from public.memberships m join public.groups g on g.id=m.group_id where g.org_id=$1 and g.created_by=$2 and m.member_child_id=$3`, [S3.academyA, S8.revTutor, FIX.childA1]), 0, 'SF-1: the guard returns BEFORE any write (no class membership committed)');
+  });
+
+  // ---- SF-2: the (org_id, created_by, purpose) partial unique index rejects a duplicate academy class ----
+  await db.client.query(`insert into public.groups (purpose,name,org_id,created_by) values ('class','SF2-A',$1,$2)`, [S3.academyA, S8.sf2Leader]);
+  await assert.rejects(
+    db.client.query(`insert into public.groups (purpose,name,org_id,created_by) values ('class','SF2-B',$1,$2)`, [S3.academyA, S8.sf2Leader]),
+    /duplicate key|unique/i,
+    'SF-2: a second academy class for the same (org, leader, purpose) is rejected by groups_academy_class_uniq');
+  // a STANDALONE class (org_id NULL) by the same leader is unaffected (the index is partial)
+  await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','SF2-standalone',$1)`, [S8.sf2Leader]);
+  await db.client.query(`insert into public.groups (purpose,name,created_by) values ('class','SF2-standalone-2',$1)`, [S8.sf2Leader]);
+});

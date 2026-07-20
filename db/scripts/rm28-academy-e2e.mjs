@@ -60,31 +60,46 @@ try {
   const { data: sethKey } = await mint(adminC.client, 'enrolled_parent')
   await seth.client.rpc('redeem_invitation', { p_code: sethKey.code })
 
-  // ---- tutor redemption: SCOPED grant to EXACTLY the invited child ----
+  // ---- tutor redemption (S8 · 0048): assembles a class GROUP via the engine; the co-mint is bg-check-gated ----
+  // Seed the tutor's completed background check FIRST so is_academy_staff → is_leader_verified → the co-mint
+  // can fire (D1: academy-tutor work-access now routes through the background-check gate).
+  await q(`insert into public.academy_staff_clearances (academy_group_id, actor_id, completed_at) values ($1,$2, now())
+           on conflict (academy_group_id, actor_id, check_kind) do update set completed_at = now(), revoked_at = null`, [ACADEMY, tutorUid])
   const { data: tKey } = await mint(adminC.client, 'tutor', BRIELLE, true)
   const { data: tRedeem } = await tutor.client.rpc('redeem_invitation', { p_code: tKey.code })
-  tRedeem?.ok && tRedeem.kind === 'tutor' ? ok('tutor redeems a scoped invitation for Brielle') : bad(`tutor redeem: ${JSON.stringify(tRedeem)}`)
-  const grant = (await q(`select tutor_id, child_id, granted_by, can_write, active from public.tutor_grants where tutor_id=$1 and child_id=$2`, [tutorUid, BRIELLE]))[0]
-  grant && grant.granted_by === seth.uid && grant.can_write === true && grant.active
-    ? ok('grant is tutor→Brielle, granted_by=the enrolled parent, can_write, active') : bad(`grant: ${JSON.stringify(grant)}`)
+  tRedeem?.ok && tRedeem.kind === 'tutor' && tRedeem.class_id ? ok('tutor redeems → an Academy class GROUP is provisioned') : bad(`tutor redeem: ${JSON.stringify(tRedeem)}`)
+  const CLASS = tRedeem?.class_id
+  const cls = (await q(`select purpose::text p, org_id, created_by from public.groups where id=$1`, [CLASS]))[0]
+  cls && cls.p === 'class' && cls.org_id === ACADEMY ? ok('the provisioned group is a class carrying org_id=academy (→ is_leader_verified takes the academy branch)') : bad(`class: ${JSON.stringify(cls)}`)
+  // the drain co-mints the group_derived work-grant for the VERIFIED tutor (attributed to the enrolled parent)
+  await q(`select public.drain_derivations()`)
+  const grant = (await q(`select origin, origin_group_id, granted_by, can_write, active from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived'`, [tutorUid, BRIELLE]))[0]
+  grant && grant.origin_group_id === CLASS && grant.granted_by === seth.uid && grant.active
+    ? ok('co-mint: a group_derived grant tutor→Brielle, scoped to the class, attributed to the enrolled parent, active') : bad(`grant: ${JSON.stringify(grant)}`)
 
   // SCOPE: the tutor sees ONLY Brielle — never Theo (same family) or Wren (family B)
   const { data: tutorKids } = await tutor.client.from('children').select('id')
   const ids = (tutorKids ?? []).map((r) => r.id)
   ids.length === 1 && ids[0] === BRIELLE ? ok('ISO: tutor sees ONLY Brielle (not Theo, not Wren)') : bad(`tutor sees: ${JSON.stringify(ids)}`)
 
-  // TRANSPARENCY: the enrolled parent sees who has access to their child
+  // TRANSPARENCY: the enrolled parent sees who has access to their child (granted_by=parent)
   const { data: sethGrants } = await seth.client.from('tutor_grants').select('tutor_id,child_id')
   ;(sethGrants ?? []).some((g) => g.tutor_id === tutorUid && g.child_id === BRIELLE) ? ok('transparency: the parent sees the Academy-granted tutor on their child') : bad('parent cannot see the grant')
 
-  // PARENT REVOCATION WINS: the parent removes the tutor; a later Academy re-mint
-  // CANNOT silently re-grant (the parent holds revocation at any time — ratified model)
-  await seth.client.from('tutor_grants').update({ active: false, revoked_at: new Date().toISOString() }).eq('tutor_id', tutorUid).eq('child_id', BRIELLE)
+  // PARENT REVOCATION (S8 = REMOVE-FROM-CLASS): a group_derived grant is system-managed, so a client edit
+  // is a no-op; the parent revokes by removing their child from the class (leave_group → S6 synchronous cut).
+  const { data: cantEdit } = await seth.client.from('tutor_grants').update({ active: false }).eq('tutor_id', tutorUid).eq('child_id', BRIELLE).eq('origin', 'group_derived').select()
+  ;(cantEdit ?? []).length === 0 ? ok('a group_derived grant is system-managed — the parent cannot client-edit it') : bad('parent client-edited a system grant')
+  const { data: left } = await seth.client.rpc('leave_group', { p_group_id: CLASS, p_member_child_id: BRIELLE, p_member_actor_id: null })
+  left?.ok ? ok('the parent removes their child from the class (leave_group, is_my_child)') : bad(`leave: ${JSON.stringify(left)}`)
+  const afterLeave = (await q(`select active from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived'`, [tutorUid, BRIELLE]))[0]
+  afterLeave?.active === false ? ok('remove-from-class: the work-grant is CUT synchronously (D2 / S6)') : bad(`grant after leave: ${JSON.stringify(afterLeave)}`)
+  // CAREFUL-OUT: a later Academy re-mint CANNOT silently re-add the parent-removed child
   const { data: reKey } = await mint(adminC.client, 'tutor', BRIELLE, true)
   const { data: reRedeem } = await tutor.client.rpc('redeem_invitation', { p_code: reKey.code })
-  reRedeem?.ok === false && reRedeem.error === 'revoked_by_parent' ? ok('parent revocation WINS: an Academy re-mint cannot silently re-grant a revoked tutor') : bad(`re-grant: ${JSON.stringify(reRedeem)}`)
-  const stillRevoked = (await q(`select active from public.tutor_grants where tutor_id=$1 and child_id=$2`, [tutorUid, BRIELLE]))[0]
-  stillRevoked?.active === false ? ok('the parent-revoked grant stayed revoked') : bad(`grant reactivated: ${JSON.stringify(stillRevoked)}`)
+  reRedeem?.ok === false && reRedeem.error === 'removed_from_class' ? ok('careful-out: a re-mint cannot silently re-add a parent-removed child (removed_from_class)') : bad(`re-grant: ${JSON.stringify(reRedeem)}`)
+  const stillRevoked = (await q(`select active from public.tutor_grants where tutor_id=$1 and child_id=$2 and origin='group_derived'`, [tutorUid, BRIELLE]))[0]
+  stillRevoked?.active === false ? ok('the removed child’s grant stayed revoked') : bad(`grant reactivated: ${JSON.stringify(stillRevoked)}`)
 
   // ---- fail-closed ----
   const { data: bogus } = await tutor.client.rpc('redeem_invitation', { p_code: 'not-a-real-key-000000' })

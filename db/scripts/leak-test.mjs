@@ -1866,3 +1866,125 @@ test('S1-d: empty aggregate → NO page; growth/milestones aggregate-only + fail
     assert.equal(await count(c, `select 1 from public.follow_me_milestones($1)`, [FIX.childB1]), 0, 'cross-family: milestones for another family’s child → 0');
   });
 });
+
+// ============================================================================
+// FOLLOW-ME · S2 — WEEKLY-ESSENTIALS RATING (0050/0051). A 'rating' Event (append-only; a
+// correction is a NEW row). Raw ratings are DEFINER-ONLY-READ (events_select excludes 'rating')
+// so a co-parent reads ZERO of another child's ratings; the SHOWN score = a definer leader
+// weekly AVERAGE (min-N floor), parent's rating EXCLUDED (perception-gap only). childA1 (parentA)
+// + childB1 (parentB) are both members of an S2 class led by S2.leader → parentA is a co-parent.
+// ============================================================================
+const S2 = { cls: '0000a17e-0000-4000-8000-000000000001', leader: '0000a17e-0000-4000-8000-0000000000c1' };
+const seedS2 = async (client) => {
+  await client.query(`insert into public.groups (id, purpose, name, created_by) values ($1,'class','S2 Class',$2) on conflict (id) do nothing`, [S2.cls, S2.leader]);
+  await client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S2.cls, S2.leader]);
+  await client.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true),($1,$3,'member',true) on conflict do nothing`, [S2.cls, FIX.childA1, FIX.childB1]);
+};
+const fmAvg = async (c, child) => ((await c.query(`select essentials_avg from public.follow_me_aggregate($1)`, [child])).rows[0] || {}).essentials_avg;
+
+test('S2-a: submit_rating — leader rates a child in their group; children/strangers/non-consented/cross-family blocked', async () => {
+  await seedS2(db.client);
+  await as('authenticated', S2.leader, async (c) => {
+    assert.equal(((await c.query(`select public.submit_rating($1,$2,'effort',8) r`, [FIX.childA1, S2.cls])).rows[0].r).role, 'leader', 'a group leader rates a child in their group');
+    assert.equal(((await c.query(`select public.submit_rating($1,$2,'effort',8) r`, [FIX.childA2, S2.cls])).rows[0].r).error, 'not_in_group', 'a leader cannot rate a child NOT in their group');
+    assert.equal(((await c.query(`select public.submit_rating($1,$2,'effort',11) r`, [FIX.childA1, S2.cls])).rows[0].r).error, 'bad_stars', 'stars out of 1..10 rejected');
+    assert.equal(((await c.query(`select public.submit_rating($1,$2,'bogus',5) r`, [FIX.childA1, S2.cls])).rows[0].r).error, 'unknown_essential', 'an unknown essential rejected');
+    // a stranger (parentB, not the leader) via the group path → not_authorized
+    await be(c, FIX.parentB);
+    assert.equal(((await c.query(`select public.submit_rating($1,$2,'effort',8) r`, [FIX.childB1, S2.cls])).rows[0].r).error, 'not_authorized', 'a non-leader cannot rate via the group path');
+    // a child actor can never rate
+    await be(c, FIX.childA1Login);
+    assert.equal(((await c.query(`select public.submit_rating($1,null,'effort',8) r`, [FIX.childA1])).rows[0].r).error, 'not_authorized', 'a child actor cannot rate');
+    // the parent rates their OWN child (group_id null); another family’s child → not_authorized; non-consented → no_consent
+    await be(c, FIX.parentA);
+    assert.equal(((await c.query(`select public.submit_rating($1,null,'effort',6) r`, [FIX.childA1])).rows[0].r).role, 'parent', 'the parent rates their own child (group-agnostic)');
+    assert.equal(((await c.query(`select public.submit_rating($1,null,'effort',6) r`, [FIX.childB1])).rows[0].r).error, 'not_authorized', 'cross-family: a parent cannot rate another family’s child');
+    assert.equal(((await c.query(`select public.submit_rating($1,null,'effort',6) r`, [FIX.childA3])).rows[0].r).error, 'no_consent', 'a non-consented child cannot be rated (consent gate)');
+  });
+});
+
+test('S2-b: raw ratings are DEFINER-ONLY-READ — a co-parent (and everyone) reads 0; the derived essentials_avg surfaces to the entitled parent', async () => {
+  await seedS2(db.client);
+  await as('authenticated', S2.leader, async (c) => {
+    await c.query(`select public.submit_rating($1,$2,'effort',7)`, [FIX.childB1, S2.cls]);
+    await c.query(`select public.submit_rating($1,$2,'respect',8)`, [FIX.childB1, S2.cls]);
+    // the leader (author) cannot read the raw rating via events_select (definer-only)
+    assert.equal(await count(c, `select 1 from public.events where kind='rating' and subject_child_id=$1`, [FIX.childB1]), 0, 'the author leader reads 0 raw rating rows (definer-only)');
+    // a CO-PARENT in the same class (parentA, member via childA1) reads ZERO of childB1’s ratings — the leak is closed
+    await be(c, FIX.parentA);
+    assert.equal(await count(c, `select 1 from public.events where kind='rating' and subject_child_id=$1`, [FIX.childB1]), 0, 'CO-PARENT LEAK CLOSED: a classmate’s parent reads 0 raw ratings');
+    // essentials_score is definer-only (a client cannot enumerate it directly)
+    await rejects(c, `select public.essentials_score($1)`, [FIX.childB1], /permission denied/i, 'essentials_score is not directly callable by a client');
+    // the ENTITLED parent gets the DERIVED score via follow_me_aggregate (raw rows stay definer-only)
+    await be(c, FIX.parentB);
+    assert.equal(await count(c, `select 1 from public.events where kind='rating' and subject_child_id=$1`, [FIX.childB1]), 0, 'even the child’s own parent reads 0 RAW ratings (definer-only)');
+    assert.equal(await fmAvg(c, FIX.childB1), '7.5', 'the DERIVED essentials_avg (leader average 7.5) surfaces via follow_me_aggregate');
+  });
+});
+
+test('S2-c: shown score = the leaders’ weekly average (min-N floor); a correction is a NEW row (latest wins); parent EXCLUDED', async () => {
+  await seedS2(db.client);
+  await as('authenticated', S2.leader, async (c) => {
+    await c.query(`select public.submit_rating($1,$2,'effort',4)`, [FIX.childA1, S2.cls]);
+    // ONE leader rating → below the min-N floor → essentials_avg NULL (not a robust average)
+    await be(c, FIX.parentA);
+    assert.equal(await fmAvg(c, FIX.childA1), null, 'MIN-N floor: a single leader rating does not surface as an average');
+    // a SECOND leader rating (different essential) → N=2 → surfaced
+    await be(c, S2.leader);
+    await c.query(`select public.submit_rating($1,$2,'respect',8)`, [FIX.childA1, S2.cls]);
+    await be(c, FIX.parentA);
+    assert.equal(await fmAvg(c, FIX.childA1), '6.0', 'the shown score = the leaders’ average avg(4,8)=6.0');
+    // a CORRECTION: the leader re-rates effort → a NEW row, latest wins (rated_at)
+    await be(c, S2.leader);
+    await c.query(`select public.submit_rating($1,$2,'effort',10)`, [FIX.childA1, S2.cls]);
+    await be(c, FIX.parentA);
+    assert.equal(await fmAvg(c, FIX.childA1), '9.0', 'a correction wins: latest effort=10, respect=8 → avg 9.0');
+    // the PARENT’s own rating is EXCLUDED from the shown average
+    await c.query(`select public.submit_rating($1,null,'effort',1)`, [FIX.childA1]);
+    assert.equal(await fmAvg(c, FIX.childA1), '9.0', 'the parent’s rating is EXCLUDED from the shown leader average');
+    // a correction is a NEW row, never an edit — both effort-leader rows persist (append-only, immutable).
+    // Raw ratings are definer-only, so count as superuser (reset role) inside the same rolled-back txn.
+    await c.query('reset role');
+    const n = (await c.query(`select count(*)::int n from public.events where kind='rating' and subject_child_id=$1 and payload->>'essential'='effort' and payload->>'role'='leader'`, [FIX.childA1])).rows[0].n;
+    await c.query('set local role authenticated');
+    assert.equal(n, 2, 'the effort correction is a NEW row (2 effort-leader rows persist; append-only, immutable)');
+  });
+});
+
+test('S2-d: perception-gap is PARENT-COCKPIT-only; versioned Core-6 taxonomy', async () => {
+  await seedS2(db.client);
+  await as('authenticated', S2.leader, async (c) => {
+    await c.query(`select public.submit_rating($1,$2,'effort',8)`, [FIX.childA1, S2.cls]);
+    await c.query(`select public.submit_rating($1,$2,'respect',9)`, [FIX.childA1, S2.cls]);
+    await be(c, FIX.parentA);
+    await c.query(`select public.submit_rating($1,null,'effort',5)`, [FIX.childA1]);   // the parent rates effort lower → a perception gap
+    const gap = (await c.query(`select essential, leader_avg, parent_stars, gap from public.essentials_perception_gap($1)`, [FIX.childA1])).rows;
+    const eff = gap.find(x => x.essential === 'effort');
+    assert.ok(eff && Number(eff.leader_avg) === 8 && Number(eff.parent_stars) === 5 && Number(eff.gap) === -3, 'the parent sees the perception gap (leader 8 vs parent 5 → -3)');
+    assert.equal(gap.length, 6, 'the perception gap covers the full active Core-6 taxonomy');
+    // a LEADER cannot see the parent’s perception gap (parent-cockpit only)
+    await be(c, S2.leader);
+    assert.equal(await count(c, `select 1 from public.essentials_perception_gap($1)`, [FIX.childA1]), 0, 'a leader gets 0 rows — the perception gap is the parent’s alone');
+    // cross-family: another family’s parent gets 0
+    await be(c, FIX.parentB);
+    assert.equal(await count(c, `select 1 from public.essentials_perception_gap($1)`, [FIX.childA1]), 0, 'cross-family: another parent cannot read the perception gap');
+  });
+  // versioned Core-6 taxonomy present + readable reference data
+  const ess = (await db.client.query(`select id, version from public.essentials where active order by sort_order`)).rows;
+  assert.deepEqual(ess.map(e => e.id), ['respect','effort','coachability','perseverance','kindness','integrity'], 'the CORE-6 essentials taxonomy is seeded, ordered, versioned');
+  assert.ok(ess.every(e => e.version >= 1), 'each essential carries a taxonomy version');
+});
+
+test('S2-e: C2 guard preserved — a co-member reads 0 of another family’s child-subject group event (events_select rewrite kept the 0011 narrowing)', async () => {
+  await seedS2(db.client);
+  // a child-subject (membership) event for childB1 in the shared class
+  await db.client.query(`insert into public.events (kind, author_actor_id, subject_child_id, group_id, payload) values ('membership',$1,$2,$3, jsonb_build_object('action','join'))`, [S2.leader, FIX.childB1, S2.cls]);
+  // parentA is a co-member of the class (via childA1) but NOT can_view_child(childB1) → reads 0 (C2)
+  await as('authenticated', FIX.parentA, async (c) => {
+    assert.equal(await count(c, `select 1 from public.events where subject_child_id=$1 and group_id=$2`, [FIX.childB1, S2.cls]), 0, 'C2: a co-member CANNOT read another family’s child-subject group event (0011 narrowing preserved)');
+  });
+  // childB1’s OWN guardian (parentB, can_view_child) reads it — positive control (branch still works)
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.ok(await count(c, `select 1 from public.events where subject_child_id=$1 and group_id=$2`, [FIX.childB1, S2.cls]) >= 1, 'C2 positive control: the child’s OWN guardian reads the event (can_view_child branch)');
+  });
+});

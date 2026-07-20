@@ -87,6 +87,8 @@ export const FILES_M3 = [
   'supabase/migrations/0047_cockpits.sql',
   'supabase/migrations/0048_academy_class_provision.sql',
   'supabase/migrations/0049_follow_me_display.sql',
+  'supabase/migrations/0050_rating_kind.sql',
+  'supabase/migrations/0051_essentials_rating.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

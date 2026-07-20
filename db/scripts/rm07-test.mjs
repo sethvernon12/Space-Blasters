@@ -348,6 +348,25 @@ console.log('S6 — leader removal needs a why-note (recorded, adult-scoped); pa
     : bad(`S6: noWhy=${JSON.stringify(noWhy)} removed=${JSON.stringify(removed)} suppressed=${suppressed} record=${record} sethSees=${sethSees.length} reAdd=${JSON.stringify(reAdd)} backIn=${backIn}`)
 }
 
+// ---- S7 (cockpit composition): coach roster/work + parent-union through the real client ----
+console.log('S7 — cockpit composition: coach sees roster + grant-held work; parent-union rolls up own children:')
+{
+  const rClass = (await S.rose.client.rpc('create_group', { p_purpose: 'class', p_name: 'Rose S7' })).data?.group_id
+  await q(`insert into public.standalone_leader_clearances (actor_id, completed_at) values ($1, now()) on conflict (actor_id, check_kind) do nothing`, [uids.rose])
+  await S.seth.client.rpc('join_group', { p_group_id: rClass, p_member_child_id: CID.Theo, p_member_actor_id: null, p_role: 'member' })
+  await drain()  // co-mint Rose→Theo
+  const roster = (await S.rose.client.rpc('coach_roster')).data ?? []
+  const work = (await S.rose.client.rpc('coach_students_work')).data ?? []
+  const theoRoster = roster.find((r) => r.child_id === CID.Theo && r.group_id === rClass)
+  const theoWork = work.find((w) => w.child_id === CID.Theo)
+  const sethUnion = (await S.seth.client.rpc('parent_union')).data ?? []
+  const danaUnion = (await S.dana.client.rpc('parent_union')).data ?? []
+  theoRoster && theoRoster.has_work_access === true && theoWork
+    && sethUnion.some((u) => u.child_id === CID.Theo) && !danaUnion.some((u) => u.child_id === CID.Theo)
+    ? ok('S7: Rose’s coach cockpit shows Theo (roster + work, granted); Seth’s parent-union rolls up Theo; Dana’s does not (bounded)')
+    : bad(`S7: theoRoster=${JSON.stringify(theoRoster)} theoWork=${JSON.stringify(theoWork)} sethUnion=${sethUnion.length} danaHasTheo=${danaUnion.some((u) => u.child_id === CID.Theo)}`)
+}
+
 await db.end()
 console.log(fails ? `\n=== RM-07: ${fails} FAIL ===` : '\n=== RM-07: ALL PASS ===')
 process.exit(fails ? 1 : 0)

@@ -84,6 +84,7 @@ export const FILES_M3 = [
   'supabase/migrations/0044_grant_provenance.sql',
   'supabase/migrations/0045_group_grant_reconcile.sql',
   'supabase/migrations/0046_removal_ceremony.sql',
+  'supabase/migrations/0047_cockpits.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'

@@ -1533,3 +1533,89 @@ test('S6-d: SEC-03 folds — child can’t flag; whitespace-only why-note reject
     assert.equal(await count(c, `select 1 from public.membership_removals where member_child_id=$1 and kind='flag'`, [FIX.childA1]), 0, 'the flagged CHILD cannot read a flag note either (P7 — same policy)');
   });
 });
+
+// ============================================================================
+// GROUP ENGINE · S7 — COCKPIT COMPOSITION (0047). Pure read composition: roster (is_group_leader)
+// and work (can_view_child) as SEPARATE facets; every child-DATA cell re-asserts can_view_child
+// (SF-1 aggregation-leak guard). Read-only; no policy change.
+// ============================================================================
+test('S7-a: coach cockpit — roster+work ONLY for grant-held (SF-1); non-consented EXCLUDED incl. academy name (F1)', async () => {
+  await seedS5b(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);   // consented → co-mint (verified leader)
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.unverClass, FIX.childA1]);   // consented but UNVERIFIED leader → NO grant (SF-1 grant-less)
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA3]);   // NON-consented (F1)
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.acadClass, FIX.childA3]);    // NON-consented, academy group (F1(b) name path)
+    await c.query('reset role'); await c.query('select public.drain_derivations()'); await c.query('set local role authenticated');
+    // granted consented child → roster + name + work
+    await be(c, S5B.standLeader);
+    const rS = (await c.query(`select child_id, nickname, has_work_access from public.coach_roster() where group_id=$1 and child_id=$2`, [S5B.standClass, FIX.childA1])).rows[0];
+    assert.ok(rS && rS.has_work_access === true && rS.nickname, 'granted consented child → roster + work-access + name');
+    // (F1) a NON-consented child is EXCLUDED from coach_roster (has_active_consent gate)
+    assert.equal(await count(c, `select 1 from public.coach_roster() where group_id=$1 and child_id=$2`, [S5B.standClass, FIX.childA3]), 0, 'F1: a NON-consented child is EXCLUDED from coach_roster');
+    const wS = (await c.query(`select child_id from public.coach_students_work() where group_id=$1`, [S5B.standClass])).rows.map(r => r.child_id);
+    assert.ok(wS.includes(FIX.childA1) && !wS.includes(FIX.childA3), 'SF-1: work for the granted child; the non-consented child has 0 work');
+    // (SF-1 grant-less) a CONSENTED rostered child under an UNVERIFIED leader → roster only (no work-access, no name)
+    await be(c, S5B.unverLeader);
+    const rU = (await c.query(`select nickname, has_work_access from public.coach_roster() where group_id=$1 and child_id=$2`, [S5B.unverClass, FIX.childA1])).rows[0];
+    assert.ok(rU && rU.has_work_access === false && rU.nickname === null, 'SF-1: a consented rostered child under an UNVERIFIED leader → roster only (no work-access, no name)');
+    assert.equal(await count(c, `select 1 from public.coach_students_work() where group_id=$1 and child_id=$2`, [S5B.unverClass, FIX.childA1]), 0, 'SF-1: the unverified leader gets 0 WORK for the rostered child');
+    // (F1(b) academy name path) a non-consented child does NOT surface (name or id) to academy staff
+    await be(c, S3.staffCleared);
+    assert.equal(await count(c, `select 1 from public.coach_roster() where group_id=$1 and child_id=$2`, [S5B.acadClass, FIX.childA3]), 0, 'F1(b): a non-consented child does NOT surface to academy staff via coach_roster (name would else leak)');
+    // cross-family: another family’s child is 0
+    await be(c, S5B.standLeader);
+    assert.equal(await count(c, `select 1 from public.coach_roster() where child_id=$1`, [FIX.childB1]), 0, 'cross-family: another family’s child is 0 in the coach cockpit');
+  });
+});
+
+test('S7-b: parent-union — all + ONLY the parent’s own children across every group (bounded by is_my_child)', async () => {
+  await seedS5b(db.client);
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass2, FIX.childA1]);
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA2]);
+    const rows = (await c.query(`select distinct child_id, group_id from public.parent_union()`)).rows;
+    const kids = new Set(rows.map(r => r.child_id)); const groups = new Set(rows.map(r => r.group_id));
+    assert.ok(kids.has(FIX.childA1) && kids.has(FIX.childA2), 'parent-union rolls up ALL the parent’s children');
+    assert.ok(!kids.has(FIX.childB1), 'parent-union NEVER includes another family’s child (bounded by is_my_child)');
+    assert.ok(groups.has(S5B.standClass) && groups.has(S5B.standClass2), 'parent-union rolls up EVERY group each child is in (KER-3)');
+  });
+  // cross-family border: parentB’s union has childB1 (own) and NONE of family A
+  await as('authenticated', FIX.parentB, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childB1]);
+    const kids = new Set((await c.query(`select distinct child_id from public.parent_union()`)).rows.map(r => r.child_id));
+    assert.ok(kids.has(FIX.childB1), 'parentB’s union shows their OWN child');
+    assert.ok(!kids.has(FIX.childA1) && !kids.has(FIX.childA2), 'cross-family: parentB’s union excludes family A’s children');
+  });
+  // (F3) a granted TUTOR (can_view_child via a co-minted grant, but NOT is_my_child) gets 0 rows from parent_union
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.standClass, FIX.childA1]);
+    await c.query('reset role'); await c.query('select public.drain_derivations()'); await c.query('set local role authenticated');
+    await be(c, S5B.standLeader);   // now holds a group_derived grant for childA1
+    assert.equal((await c.query('select public.can_view_child($1) v', [FIX.childA1])).rows[0].v, true, 'precondition: the tutor CAN view the child (grant)');
+    assert.equal(await count(c, `select 1 from public.parent_union()`), 0, 'F3: a granted tutor gets 0 rows from parent_union (is_my_child is STRICTER than can_view_child)');
+  });
+});
+
+test('S7-c: coach isolation (can’t see another coach’s team); cockpit-follows-role (lose the role → lose the view)', async () => {
+  await seedS5b(db.client);
+  // coach isolation: standLeader must NOT see unverLeader’s team
+  await as('authenticated', FIX.parentA, async (c) => {
+    await c.query(`select public.join_group($1,$2,null,'member')`, [S5B.unverClass, FIX.childA1]);
+    await be(c, S5B.standLeader);
+    assert.equal(await count(c, `select 1 from public.coach_roster() where group_id=$1`, [S5B.unverClass]), 0, 'coach isolation: standLeader does NOT see another coach’s team roster');
+    assert.equal(await count(c, `select 1 from public.coach_students_work() where group_id=$1`, [S5B.unverClass]), 0, 'coach isolation: standLeader sees 0 of another coach’s team work');
+  });
+  // cockpit-follows-role: a co-tutor leads standClass → sees it; deactivate their membership → the roster DISAPPEARS
+  const coTutor = '0000513b-0000-4000-8000-0000000000e2';
+  await db.client.query(`insert into public.memberships (group_id, member_child_id, role, active) values ($1,$2,'member',true) on conflict do nothing`, [S5B.standClass, FIX.childA1]);
+  await db.client.query(`insert into public.memberships (group_id, member_actor_id, role, active) values ($1,$2,'tutor',true) on conflict do nothing`, [S5B.standClass, coTutor]);
+  await as('authenticated', coTutor, async (c) => {
+    assert.ok(await count(c, `select 1 from public.coach_roster() where group_id=$1 and child_id=$2`, [S5B.standClass, FIX.childA1]) >= 1, 'co-tutor (is_group_leader) composes a coach cockpit for their class');
+  });
+  await db.client.query(`update public.memberships set active=false where group_id=$1 and member_actor_id=$2`, [S5B.standClass, coTutor]);
+  await as('authenticated', coTutor, async (c) => {
+    assert.equal(await count(c, `select 1 from public.coach_roster() where group_id=$1`, [S5B.standClass]), 0, 'cockpit-follows-role: the co-tutor loses the leader role → the roster DISAPPEARS');
+  });
+});

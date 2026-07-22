@@ -34,6 +34,10 @@ Deno.serve(async (req) => {
   const childId = body?.childId
   if (!childId) return json({ error: 'bad_request' }, 400)
 
+  // rate-limit (HARD RULE #8): per-caller cap on this AI endpoint (keyed on auth.uid() server-side).
+  const rl = await rpc('enforce_rate_limit', auth, { p_bucket: 'ai-assignment', p_max: 60, p_window_secs: 3600 })
+  if (rl?.error === 'rate_limited') return json({ error: 'rate_limited', retry_after_secs: rl.retry_after_secs }, 429)
+
   // 1. authorize the write (fail-closed; denial audited)
   const az = await rpc('authorize', auth, { p_action: ACTION, p_child_id: childId })
   if (!az?.allow) {

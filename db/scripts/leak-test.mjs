@@ -2198,3 +2198,32 @@ test('0053-e: a child login cannot direct-INSERT a group (groups_insert belt); a
     assert.equal(r.rows.length, 1, 'an adult can still direct-insert a group (adult path intact)');
   });
 });
+
+// ============================================================================
+// A6 · 0054 — enforce_rate_limit: the reusable per-CALLER limiter for the non-grade endpoints.
+// ============================================================================
+test('0054: enforce_rate_limit caps per caller, resets on window, isolates between callers', async () => {
+  await as('authenticated', FIX.parentA, async (c) => {
+    // p_max=3 in a 1h window: the first 3 calls pass, the 4th is rate_limited
+    for (let i = 1; i <= 3; i++) {
+      const r = (await c.query(`select public.enforce_rate_limit('t54',3,3600) r`)).rows[0].r;
+      assert.equal(r.ok, true, `call ${i} within the cap`);
+    }
+    const over = (await c.query(`select public.enforce_rate_limit('t54',3,3600) r`)).rows[0].r;
+    assert.ok(over.ok === false && over.error === 'rate_limited' && over.retry_after_secs > 0, 'the 4th call is rate_limited with a retry hint');
+    // rolling-window reset: age the window into the past (now() is txn-constant, so do it via superuser), then a call resets
+    await c.query('reset role');
+    await c.query(`update public.rpc_rate_limits set window_start = now() - interval '2 hours' where key like 't54:%'`);
+    await c.query('set local role authenticated'); await be(c, FIX.parentA);
+    const reset = (await c.query(`select public.enforce_rate_limit('t54',3,3600) r`)).rows[0].r;
+    assert.equal(reset.ok, true, 'after the window elapses, the counter resets');
+  });
+  // per-CALLER isolation: parentB has their own fresh counter for the same bucket
+  await as('authenticated', FIX.parentB, async (c) => {
+    assert.equal(((await c.query(`select public.enforce_rate_limit('t54',3,3600) r`)).rows[0].r).ok, true, 'a different caller has an independent limit (keyed on auth.uid())');
+  });
+  // anon cannot call it (revoked)
+  await as('anon', null, async (c) => {
+    await rejects(c, `select public.enforce_rate_limit('t54',3,3600)`, undefined, /permission denied/i, 'anon cannot call the limiter');
+  });
+});

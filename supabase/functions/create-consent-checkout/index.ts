@@ -47,6 +47,10 @@ Deno.serve(async (req) => {
   const { data: amChild, error: acErr } = await caller.rpc('is_child_actor_self')
   if (acErr || amChild !== false) return json({ denied: true, reason: 'not_authorized' }, 403)
 
+  // rate-limit (HARD RULE #8): per-caller cap on signup/consent-checkout (bot/abuse protection).
+  const { data: rl } = await caller.rpc('enforce_rate_limit', { p_bucket: 'consent-checkout', p_max: 10, p_window_secs: 3600 })
+  if (rl?.error === 'rate_limited') return json({ error: 'rate_limited', retry_after_secs: rl.retry_after_secs }, 429)
+
   const body = await req.json().catch(() => ({}))
   const nickname = String(body?.nickname ?? '').slice(0, 40).trim()
   const grade = body?.gradeBand ? String(body.gradeBand).slice(0, 8) : ''

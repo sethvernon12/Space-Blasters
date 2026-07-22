@@ -91,6 +91,7 @@ export const FILES_M3 = [
   'supabase/migrations/0051_essentials_rating.sql',
   'supabase/migrations/0052_follower_axis.sql',
   'supabase/migrations/0053_child_actor_belts.sql',
+  'supabase/migrations/0054_rate_limit_helper.sql',
 ]
 
 const DEV_REF = 'appplvbgyghlhrjcaagn'
